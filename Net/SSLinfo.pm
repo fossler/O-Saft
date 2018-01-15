@@ -31,13 +31,13 @@ package Net::SSLinfo;
 use strict;
 use warnings;
 use constant {
-    SSLINFO_VERSION => '17.05.17',
+    SSLINFO_VERSION => '17.11.30',
     SSLINFO         => 'Net::SSLinfo',
     SSLINFO_ERR     => '#Net::SSLinfo::errors:',
     SSLINFO_HASH    => '<<openssl>>',
     SSLINFO_UNDEF   => '<<undefined>>',
     SSLINFO_PEM     => '<<N/A (no PEM)>>',
-    SSLINFO_SID     => '@(#) Net::SSLinfo.pm 1.187 17/05/16 22:02:21',
+    SSLINFO_SID     => '@(#) Net::SSLinfo.pm 1.202 18/01/07 12:07:14',
 };
 
 ######################################################## public documentation #
@@ -158,6 +158,11 @@ Value will not be used at all is set C<undef>.
 Depth of peer certificate verification; default: 9
 
 Value will not be used at all if set C<undef>.
+
+=item $Net::SSLinfo::ignore_handshake
+
+If set to "1" connection attempts returning "faild handshake" will be
+treated as errorM default: 0.
 
 =item $Net::SSLinfo::proxyhost
 
@@ -539,11 +544,13 @@ our @EXPORT_OK = qw(
         default
         selected
         cipher_list
+        cipher_openssl
         cipher_local
         ciphers
         cn
         commonname
         altname
+        subjectaltnames
         authority
         owner
         certificate
@@ -660,6 +667,7 @@ $Net::SSLinfo::no_cert     = 0; # 0 collect data from target's certificate
                                 #   return string $Net::SSLinfo::no_cert_txt
 $Net::SSLinfo::no_cert_txt = 'unable to load certificate'; # same as openssl 1.0.x
 $Net::SSLinfo::ignore_case = 1; # 1 match hostname, CN case insensitive
+$Net::SSLinfo::ignore_handshake = 0; # 1 treat "failed handshake" as error
 $Net::SSLinfo::timeout_sec = 3; # time in seconds for timeout executable
 $Net::SSLinfo::starttls    = "";# use STARTTLS if not empty
 $Net::SSLinfo::proxyhost   = "";# FQDN or IP of proxy to be used
@@ -719,8 +727,9 @@ my $_timeout = undef;
 my $_openssl = undef;
 
 sub _setcommand {
-    #? check for external command $command; returns command or undef
-    my $command =shift;
+    #? check for external command $command; returns command or empty string
+    my $command = shift;
+    return "" if ($command eq "");
     my $cmd;
     my $opt = "version";
        $opt = "--version" if ($command =~ m/timeout$/);
@@ -730,8 +739,13 @@ sub _setcommand {
         chomp $cmd;
         _trace("_setcommand: $command = $cmd");
         $cmd = "$command";
+        if ($cmd =~ m#timeout$#) {
+            # some timout implementations require -t option, i.e. BusyBox v1.26.2
+            # hence we check if it works with -t and add it to $cmd
+            $cmd = "$cmd -t " if (not qx($cmd -t 2 pwd 2>&1));
+        }
     } else {
-        _trace("_setcommand: $command = <<undef>>");
+        _trace("_setcommand: $command = ''");
         $cmd = "";  # i.e. Mac OS X does not have timeout by default; can work without ...
     }
     if ($^O !~ m/MSWin32/) {
@@ -968,7 +982,7 @@ my %_SSLinfo= ( # our internal data structure
     'session_protocol'  => "",  # SSL-Session Protocol
     # following from HTTP(S) request
     'https_protocols'   => "",  # HTTPS Alternate-Protocol header
-    'https_svc'         => "",  # HTTPS Alt-Svc header
+    'https_svc'         => "",  # HTTPS Alt-Svc, X-Firefox-Spdy header
     'https_body'        => "",  # HTTPS response (HTML body)
     'https_status'      => "",  # HTTPS response (aka status) line
     'https_server'      => "",  # HTTPS Server header
@@ -977,7 +991,7 @@ my %_SSLinfo= ( # our internal data structure
     'https_refresh'     => "",  # HTTPS Refresh header send by server
     'https_pins'        => "",  # HTTPS Public Key Pins header
     'http_protocols'    => "",  # HTTP Alternate-Protocol header
-    'http_svc'          => "",  # HTTP Alt-Svc header
+    'http_svc'          => "",  # HTTP Alt-Svc, X-Firefox-Spdy header
     'http_status'       => "",  # HTTP response (aka status) line
     'http_location'     => "",  # HTTP Location header send by server
     'http_refresh'      => "",  # HTTP Refresh header send by server
@@ -1032,7 +1046,7 @@ sub ssleay_methods  {
     push(@list, 'CTX_v23_new'     ) if (defined &Net::SSLeay::CTX_v23_new);
     push(@list, 'CTX_v3_new'      ) if (defined &Net::SSLeay::CTX_v3_new);
     push(@list, 'CTX_v2_new'      ) if (defined &Net::SSLeay::CTX_v2_new);
-    push(@list, 'CTX_new_with_method') if (defined &Net::SSLeay::CTX_new_with_method);
+    push(@list, 'CTX_new_with_method')  if (defined &Net::SSLeay::CTX_new_with_method);
     push(@list, 'CTX_new'         ) if (defined &Net::SSLeay::CTX_new);
     push(@list, 'CTX_dtlsv1_3_new') if (defined &Net::SSLeay::CTX_dtlsv1_3_new);
     push(@list, 'CTX_dtlsv1_2_new') if (defined &Net::SSLeay::CTX_dtlsv1_2_new);
@@ -1040,6 +1054,8 @@ sub ssleay_methods  {
     push(@list, 'CTX_get_options' ) if (defined &Net::SSLeay::CTX_get_options);
     push(@list, 'CTX_set_options' ) if (defined &Net::SSLeay::CTX_set_options);
     push(@list, 'CTX_set_timeout' ) if (defined &Net::SSLeay::CTX_set_timeout);
+    push(@list, 'CTX_set_alpn_protos')  if (defined &Net::SSLeay::CTX_set_alpn_protos); # Net::SSLeay > 1.72 ??
+    push(@list, 'CTX_set_next_proto_select_cb') if (defined &Net::SSLeay::CTX_set_next_proto_select_cb);
     return @list;
 } # ssleay_methods
 
@@ -1061,7 +1077,7 @@ $line
 #            ::DTLSv1_2_method  = " . ((grep{/^DTLSv1_2_method$/}  @list) ? 1 : 0) . "
 #            ::DTLS_method      = " . ((grep{/^DTLS_method$/}      @list) ? 1 : 0) . "
 #}
-#            ::CTX_new_with_method = " . ((grep{/^CTX_new_with_method$/} @list) ? 1 : 0) . "
+#            ::CTX_new_with_method  = " . ((grep{/^CTX_new_with_method$/} @list) ? 1 : 0) . "
 #            ::CTX_new          = " . ((grep{/^CTX_new$/}          @list) ? 1 : 0) . "
 #            ::CTX_v2_new       = " . ((grep{/^CTX_v2_new$/}       @list) ? 1 : 0) . "
 #            ::CTX_v3_new       = " . ((grep{/^CTX_v3_new$/}       @list) ? 1 : 0) . "
@@ -1077,6 +1093,8 @@ $line
 #            ::CTX_get_options  = " . ((grep{/^CTX_get_options$/}  @list) ? 1 : 0) . "
 #            ::CTX_set_options  = " . ((grep{/^CTX_set_options$/}  @list) ? 1 : 0) . "
 #            ::CTX_set_timeout  = " . ((grep{/^CTX_set_timeout$/}  @list) ? 1 : 0) . "
+#            ::CTX_set_alpn_protos  = " . ((grep{/^CTX_set_alpn_protos$/}  @list) ? 1 : 0) . "
+#            ::CTX_set_next_proto_select_cb = " . ((grep{/^CTX_set_next_proto_select_cb$/}  @list) ? 1 : 0) . "
 $line
 # Net::SSLeay} function
 # Net::SSLeay{ constant           hex value
@@ -1159,7 +1177,7 @@ sub _SSLinfo_get    {
     _traceset();
     _trace("_SSLinfo_get('$key'," . ($host||'') . "," . ($port||'') . ")");
     if ($key eq 'ciphers_openssl') {
-        _trace("_SSLinfo_get($key): WARNING: function obsolete, please use cipher_local()");
+        _trace("_SSLinfo_get($key): WARNING: function obsolete, please use cipher_openssl()");
         return "";
     }
     if ($key eq 'errors') { # always there, no need to connect target
@@ -1273,6 +1291,7 @@ sub _ssleay_get     {
             $type = 'email'         if ($type eq '1');
             $name = '<<undefined>>' if(($type eq '0') && ($name!~/^/));
             $type = 'othername'     if ($type eq '0');
+            $name = join('.', unpack('W4', $name)) if ($type eq 'IPADD');
             # all other types are used as is, so we see what's missing
             $ret .= ' ' . join(':', $type, $name);
         }
@@ -1320,7 +1339,7 @@ sub _ssleay_socket  {
         ## use critic
         return $socket;
     }; # TRY
-    push(@{$_SSLinfo{'errors'}}, "do_ssl_open() failed calling $src: $err");
+    push(@{$_SSLinfo{'errors'}}, "_ssleay_socket() failed calling $src: $err");
     _trace("_ssleay_socket: undef");
     return;
 } # _ssleay_socket
@@ -1447,6 +1466,7 @@ sub _ssleay_ctx_new {
             #   Net::SSLeay::CTX_set_options(); # can not fail according description!
                 Net::SSLeay::CTX_set_options($ctx, 0); # reset options
                 Net::SSLeay::CTX_set_options($ctx, &Net::SSLeay::OP_ALL);
+# TODO:         Net::SSLeay::CTX_set_options($ctx, &Net::SSLeay::OP_ALL | &Net::SSLeay::OP_NO_COMPRESSION);
                 #test# # quick$dirty disable SSL_OP_TLSEXT_PADDING 0x00000010L (see ssl.h)
                 #test# Net::SSLeay::CTX_set_options($ctx, &Net::SSLeay::OP_ALL ^ 0x00000010);
             # sets all options, even those for all protocol versions (which are removed later)
@@ -1461,7 +1481,7 @@ sub _ssleay_ctx_new {
         return $ctx;
     } # TRY
     # reach here if ::CTX_* failed
-    push(@{$_SSLinfo{'errors'}}, "do_ssl_open() failed calling $src: $err");
+    push(@{$_SSLinfo{'errors'}}, "_ssleay_ctx_new() failed calling $src: $err");
     _trace("_ssleay_ctx_new: undef");
     return;
 } # _ssleay_ctx_new
@@ -1521,7 +1541,7 @@ sub _ssleay_ctx_ca  {
         #        &Net::SSLeay::X509_V_FLAG_CRL_CHECK);
         return 1; # success
     } # TRY
-    push(@{$_SSLinfo{'errors'}}, "do_ssl_open() failed calling $src: $err");
+    push(@{$_SSLinfo{'errors'}}, "_ssleay_ctx_ca() failed calling $src: $err");
     _trace("_ssleay_ctx_ca: undef.");
     return;
 } # _ssleay_ctx_ca
@@ -1565,7 +1585,7 @@ sub _ssleay_ssl_new {
         }
         return $ssl;
     } # TRY
-    push(@{$_SSLinfo{'errors'}}, "do_ssl_open() failed calling $src: $err");
+    push(@{$_SSLinfo{'errors'}}, "_ssleay_ssl_new() failed calling $src: $err");
     _trace("_ssleay_ssl_new: undef.");
     return;
 } # _ssleay_ssl_new
@@ -1586,18 +1606,22 @@ sub _ssleay_ssl_np  {
     my @err;
     # functions return 0 on success, hence: && do{} to catch errors
     # ALPN (Net-SSLeay > 1.55, openssl >= 1.0.2)
-    $src = 'Net::SSLeay::CTX_set_alpn_protos()';
-    if (exists &Net::SSLeay::CTX_set_alpn_protos) {
-        Net::SSLeay::CTX_set_alpn_protos($ctx, [@protos_alpn]) && do {
-            push(@err, "_ssleay_ssl_np() failed calling $src: $!");
-        };
+    if ($protos_alpn !~ m/^\s*$/) {
+        if (exists &Net::SSLeay::CTX_set_alpn_protos) {
+            $src = 'Net::SSLeay::CTX_set_alpn_protos()';
+            Net::SSLeay::CTX_set_alpn_protos($ctx, [@protos_alpn]) && do {
+                push(@err, "_ssleay_ssl_np(),alpn failed calling $src: $!");
+            };
+        }
     }
     # NPN  (Net-SSLeay > 1.45, openssl >= 1.0.1)
-    if (exists &Net::SSLeay::CTX_set_next_proto_select_cb) {
-        $src = 'Net::SSLeay::CTX_set_next_proto_select_cb()';
-        Net::SSLeay::CTX_set_next_proto_select_cb($ctx, @protos_npn) && do {
-            push(@err, "_ssleay_ssl_np() failed calling $src: $!");
-        };
+    if ($protos_npn !~ m/^\s*$/) {
+        if (exists &Net::SSLeay::CTX_set_next_proto_select_cb) {
+            $src = 'Net::SSLeay::CTX_set_next_proto_select_cb()';
+            Net::SSLeay::CTX_set_next_proto_select_cb($ctx, @protos_npn) && do {
+                push(@err, "_ssleay_ssl_np(),npn  failed calling $src: $!");
+            };
+        }
     }
     _trace("_ssleay_ssl_np $#err.");
     return @err;
@@ -1828,6 +1852,22 @@ sub s_client_opt_get{ return _OpenSSL_opt_get(shift); }
 
 =pod
 
+=head2 do_ssl_free($ctx,$ssl,$socket)
+
+Destroy and free L<Net::SSLeay> allocated objects.
+=cut
+
+sub do_ssl_free     {
+    #? free SSL objects of NET::SSLeay TCP connection
+    my ($ctx, $ssl, $socket) = @_;
+    close($socket)              if (defined $socket);
+    Net::SSLeay::free($ssl)     if (defined $ssl); # or warn "**WARNING: Net::SSLeay::free(): $!";
+    Net::SSLeay::CTX_free($ctx) if (defined $ctx); # or warn "**WARNING: Net::SSLeay::CTX_free(): $!";
+    return;
+} # do_ssl_free
+
+=pod
+
 =head2 do_ssl_new($host,$port,$sslversions[,$cipherlist,$alpns,$npns,$socket])
 
 Establish new SSL connection using L<Net::SSLeay>.
@@ -1849,9 +1889,9 @@ sub do_ssl_new      {
     my $tmp_sock= undef;# newly opened socket,
                         # Note: $socket is only used to check if it is defined
     my $dum     = undef;
-    $cipher     = "" if (!defined $cipher); # cipher parameter is optional
-    $protos_alpn= "" if (!defined $protos_alpn); # -"-
-    $protos_npn = "" if (!defined $protos_npn);  # -"-
+    $cipher     = "" if (not defined $cipher);      # cipher parameter is optional
+    $protos_alpn= "" if (not defined $protos_alpn); # -"-
+    $protos_npn = "" if (not defined $protos_npn);  # -"-
     _traceset();
     _trace("do_ssl_new(" . ($host||'') . "," . ($port||'') . "," . ($sslversions||'') . ","
                        . ($cipher||'') . "," . ($protos_alpn||'') . ",socket)");
@@ -1895,30 +1935,28 @@ sub do_ssl_new      {
             $src = $ctx_new;
 
             #0. first reset Net::SSLeay objects if they exist
-            close($tmp_sock) if (defined $tmp_sock);    # from previous attempt
+            do_ssl_free($ctx, $ssl, $tmp_sock);
+            $ctx        = undef;
+            $ssl        = undef;
             $tmp_sock   = undef;
-            Net::SSLeay::free($ssl)      if (defined $ssl);
-            Net::SSLeay::CTX_free($ctx)  if (defined $ctx);
 
             #1a. open TCP connection; no way to continue if it fails
-            if (!defined $socket) {
-                ($tmp_sock = _ssleay_socket($host, $port, $tmp_sock)) or do {$src = '_ssleay_socket()'} and last TRY;
-                # TODO: need to pass ::starttls, ::proxyhost and ::proxyport
-            }
+            ($tmp_sock = _ssleay_socket($host, $port, $tmp_sock)) or do {$src = '_ssleay_socket()'} and last TRY;
+            # TODO: need to pass ::starttls, ::proxyhost and ::proxyport
 
             #1b. get SSL's context object
             ($ctx = _ssleay_ctx_new($ctx_new))  or do {$src = '_ssleay_ctx_new()'} and next;
 
             #1c. disable not specified SSL versions, limit as specified by user
-            foreach  my $ssl (keys %_SSLmap) {
+            foreach  my $_ssl (keys %_SSLmap) {
                 # $sslversions  passes the version which should be supported,  but
                 # openssl and hence Net::SSLeay, configures what  should *not*  be
                 # supported, so we skip all versions found in  $sslversions
                 next if ($sslversions =~ m/^\s*$/); # no version given, leave default
-                next if (grep{/^$ssl$/} split(" ", $sslversions));
-                my $bitmask = _SSLbitmask_get($ssl);
+                next if (grep{/^$_ssl$/} split(" ", $sslversions));
+                my $bitmask = _SSLbitmask_get($_ssl);
                 if (defined $bitmask) {        # if there is a bitmask, disable this version
-                    _trace("do_ssl_new: OP_NO_$ssl");  # NOTE: constant name *not* as in ssl.h
+                    _trace("do_ssl_new: OP_NO_$_ssl");  # NOTE: constant name *not* as in ssl.h
                     Net::SSLeay::CTX_set_options($ctx, $bitmask);
                 }
                 #$Net::SSLeay::ssl_version = 2;  # Insist on SSLv2
@@ -1939,19 +1977,27 @@ sub do_ssl_new      {
             }
 
             #1f. prepare SSL object
-            ($ssl = _ssleay_ssl_new($ctx, $host, $tmp_sock, $cipher)) or {$src = '_ssleay_ssl_new()'} and next;
+            ($ssl = _ssleay_ssl_new($ctx, $host, $tmp_sock, $cipher)) or do {$src = '_ssleay_ssl_new()'} and next;
 
             #1g. connect SSL
             local $SIG{PIPE} = 'IGNORE';        # Avoid "Broken Pipe"
             my $ret;
             $src = 'Net::SSLeay::connect() ';
             $ret =  Net::SSLeay::connect($ssl); # may call _check_peer() ..
-            if ($ret <= 0) {
-                $src .= " failed start with $ctx_new()"     if ($ret <  0); # i.e. no matching protocol
-                $src .= " failed handshake with $ctx_new()" if ($ret == 0);
+            if ($ret <  0) {
+                $src .= " failed start with $ctx_new()"; # i.e. no matching protocol
                 $err  = $!;
                 push(@{$_SSLtemp{'errors'}}, "do_ssl_new() $src: $err");
                 next;
+            }
+            # following check only if requested; fails to often
+            if ($Net::SSLinfo::ignore_handshake <= 0){
+              if ($ret == 0) {
+                $src .= " failed handshake with $ctx_new()";
+                $err  = $!;
+                push(@{$_SSLtemp{'errors'}}, "do_ssl_new() $src: $err");
+                next;
+              }
             }
             $src = "";
             last;
@@ -1989,22 +2035,6 @@ sub do_ssl_new      {
 
 =pod
 
-=head2 do_ssl_free($ctx,$ssl,$socket)
-
-Destroy and free L<Net::SSLeay> allocated objects.
-=cut
-
-sub do_ssl_free     {
-    #? free SSL objects of NET::SSLeay TCP connection
-    my ($ctx, $ssl, $socket) = @_;
-    close($socket)              if (defined $socket);
-    Net::SSLeay::free($ssl)     if (defined $ssl); # or warn "**WARNING: Net::SSLeay::free(): $!";
-    Net::SSLeay::CTX_free($ctx) if (defined $ctx); # or warn "**WARNING: Net::SSLeay::CTX_free(): $!";
-    return;
-} # do_ssl_free
-
-=pod
-
 =head2 do_ssl_open($host,$port,$sslversions[,$cipherlist])
 
 Opens new SSL connection with Net::SSLeay and stores collected data.
@@ -2018,6 +2048,8 @@ Returns array with $ssl object and $ctx object.
 
 This method is called automatically by all other functions, hence no need to
 call it directly.
+
+Use L<do_ssl_close($host,$port)> to free allocated objects.
 
 This method tries to use the most modern methods provided by Net::SSLeay to
 establish the connections, i.e. CTX_tlsv1_2_new or CTX_v23_new. If a method
@@ -2033,7 +2065,11 @@ sub _FLAGS_ALLOW_SELFSIGNED () { return 0x00000001; }
 
 sub do_ssl_open($$$@) {
     my ($host, $port, $sslversions, $cipher) = @_;
-    $cipher = "" if (!defined $cipher); # cipher parameter is optional
+    $cipher = "" if (not defined $cipher);  # cipher parameter is optional
+    #$port   = _check_port($port);
+        # TODO: port may be empty for some calls; results in "... uninitialized
+        #       value $port ..."; need to check if call can provide a port
+        #       mainly happens if called with --ignore-no-connect
     _traceset();
     _trace("do_ssl_open(" . ($host||'') . "," . ($port||'') . "," . ($sslversions||'') . "," . ($cipher||'') . ")");
     goto finished if (defined $_SSLinfo{'ssl'});
@@ -2056,13 +2092,13 @@ sub do_ssl_open($$$@) {
     # initialize %_OpenSSL_opt
     $src = 's_client_check';
     if ($Net::SSLinfo::use_openssl > 0) {
-        if (!defined s_client_check()) {
+        if (not defined s_client_check()) {
             push(@{$_SSLinfo{'errors'}}, "do_ssl_open() WARNING $src: undefined");
        }
     }
 
-    if (defined $Net::SSLinfo::next_protos) {
-        warn "**WARNING: Net::SSLinfo::next_protos no longer supported, please use Net::SSLinfo::next_protos instead"
+    if (defined $Net::SSLinfo::next_protos) {   # < 1.182
+        warn "**WARNING: Net::SSLinfo::next_protos no longer supported, please use Net::SSLinfo::protos_alpn instead"
     }
 
     TRY: {
@@ -2183,10 +2219,12 @@ sub do_ssl_open($$$@) {
         if ($Net::SSLinfo::use_http > 0) {
             _trace("do_ssl_open HTTPS {");
             #dbx# $host .= 'x'; # TODO: <== some servers behave strange if a wrong hostname is passed
+            # TODO: test with a browser User-Agent
+            my $ua = "User-Agent: Mozilla/5.0 (quark rv:52.0) Gecko/20100101 Firefox/52.0";
             my $response = "";
             my $request  = "GET / HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n";
 # $t1 = time();
-#           ($ctx = Net::SSLeay::CTX_v23_new()) or {$src = 'Net::SSLeay::CTX_v23_new()'} and last;
+#           ($ctx = Net::SSLeay::CTX_v23_new()) or do {$src = 'Net::SSLeay::CTX_v23_new()'} and last;
             # FIXME: need to find proper method instead hardcoded CTX_v23_new(); see _ssleay_ctx_new
             #dbx# $Net::SSLeay::trace     = 2;
             $src = 'Net::SSLeay::write()';
@@ -2210,10 +2248,10 @@ sub do_ssl_open($$$@) {
             $_SSLinfo{'https_status'}   =~ s/[\r\n].*$//ms; # get very first line
             $_SSLinfo{'https_server'}   =  _header_get('Server',   $response);
             $_SSLinfo{'https_refresh'}  =  _header_get('Refresh',  $response);
-            $_SSLinfo{'https_pins'}     =  _header_get('Public-Key-Pins', $response);
+            $_SSLinfo{'https_pins'}     =  _header_get('Public-Key-Pins',    $response);
             $_SSLinfo{'https_protocols'}=  _header_get('Alternate-Protocol', $response);
             $_SSLinfo{'https_svc'}      =  _header_get('Alt-Svc',  $response);
-            $_SSLinfo{'https_svc'}      .= _header_get('X-Firefox-Spdy',  $response);
+            $_SSLinfo{'https_svc'}      .= _header_get('X-Firefox-Spdy',     $response);
             $_SSLinfo{'https_sts'}      =  _header_get('Strict-Transport-Security', $response);
             $_SSLinfo{'hsts_httpequiv'} =  $_SSLinfo{'https_body'};
             $_SSLinfo{'hsts_httpequiv'} =~ s/.*?(http-equiv=["']?Strict-Transport-Security[^>]*).*/$1/ims;
@@ -2226,12 +2264,15 @@ sub do_ssl_open($$$@) {
 # TODO: HTTP header:
 #    X-Firefox-Spdy: 3.1
 #    X-Firefox-Spdy: h2             (seen at policy.mta-sts.google.com 9/2016)
+#           X-Firefox-Spdy  most likely returned only for proper User-Agent
             _trace("\n$response \n# do_ssl_open HTTPS }");
             _trace("do_ssl_open HTTP {");   # HTTP uses its own connection ...
             my %headers;
             $src = 'Net::SSLeay::get_http()';
             ($response, $_SSLinfo{'http_status'}, %headers) = Net::SSLeay::get_http($host, 80, '/',
                  Net::SSLeay::make_headers('Connection' => 'close', 'Host' => $host)
+                 # TODO: test with a browser User-Agent
+                 # 'User-Agent' => 'Mozilla/5.0 (quark rv:52.0) Gecko/20100101 Firefox/52.0';
             );
                 # Net::SSLeay 1.58 (and before)
                 # Net::SSLeay::get_http() may return:
@@ -2255,7 +2296,8 @@ sub do_ssl_open($$$@) {
                 $_SSLinfo{'http_location'}  =  $headers{(grep{/^Location$/i} keys %headers)[0] || ""};
                 $_SSLinfo{'http_refresh'}   =  $headers{(grep{/^Refresh$/i}  keys %headers)[0] || ""};
                 $_SSLinfo{'http_sts'}       =  $headers{(grep{/^Strict-Transport-Security$/i} keys %headers)[0] || ""};
-                $_SSLinfo{'http_svc'}       =  $headers{(grep{/^Alt-Svc$/i} keys %headers)[0]  || ""};
+                $_SSLinfo{'http_svc'}       =  $headers{(grep{/^Alt-Svc$/i}  keys %headers)[0] || ""} || "";
+                $_SSLinfo{'http_svc'}      .=  $headers{(grep{/^X-Firefox-Spdy$/i}    keys %headers)[0] || ""} || "";
                 $_SSLinfo{'http_protocols'} =  $headers{(grep{/^Alternate-Protocol/i} keys %headers)[0] || ""};
                 # TODO: http_protocols somtimes fails, reason unknown (03/2015)
             } else { # any status code > 500
@@ -2303,7 +2345,7 @@ sub do_ssl_open($$$@) {
         $_SSLinfo{'fingerprint'}        = $fingerprint; #alias
        ($_SSLinfo{'fingerprint_type'},  $_SSLinfo{'fingerprint_hash'}) = split(/=/, $fingerprint);
         $_SSLinfo{'fingerprint_type'}   =~ s/\s+.*$//;
-        $_SSLinfo{'fingerprint_type'}   =~ s/(^[^\s]*).*/$1/ if (defined $1);  # TODO: ugly check
+        $_SSLinfo{'fingerprint_type'}   =~ s/(^[^\s]*).*/$1/ if (m/^[^\s]*/);  # TODO: ugly check
         $_SSLinfo{'fingerprint_type'}   = $Net::SSLinfo::no_cert_txt if (!defined $_SSLinfo{'fingerprint_type'});
         $_SSLinfo{'fingerprint_hash'}   = $Net::SSLinfo::no_cert_txt if (!defined $_SSLinfo{'fingerprint_hash'});
         $_SSLinfo{'subject_hash'}       = _openssl_x509($_SSLinfo{'PEM'}, '-subject_hash');
@@ -2450,11 +2492,11 @@ sub do_ssl_open($$$@) {
                 #
                 # cannot use eval with block form here, needs to be quoted
                 ## no critic qw(BuiltinFunctions::ProhibitStringyEval)
-                if (eval('use Configx; $b = $Config{ivsize};')) {
+                if (eval('use Config; $b = $Config{ivsize};')) {
                     # use $Config{ivsize}
                 } else {
                     $err = "use Config";
-                    push(@{$_SSLinfo{'errors'}}, "do_ssl_open() failed calling $src: $err");
+                    push(@{$_SSLinfo{'errors'}}, "do_ssl_open(),Cfg failed calling $src: $err");
                     $_SSLinfo{'serial_int'} = "<<$err failed>>";
                 }
                 ## use critic
@@ -2466,7 +2508,7 @@ sub do_ssl_open($$$@) {
                     $_SSLinfo{'serial_int'} = Math::BigInt->from_hex($d);
                 } else {
                     $err = "Math::BigInt->from_hex($d)";
-                    push(@{$_SSLinfo{'errors'}}, "do_ssl_open() failed calling $src: $err");
+                    push(@{$_SSLinfo{'errors'}}, "do_ssl_open(),Big failed calling $src: $err");
                     $_SSLinfo{'serial_int'} = "<<$err failed>>";
                 }
             } else {
@@ -2608,7 +2650,7 @@ sub do_ssl_open($$$@) {
     } # TRY
 
     #6. error handling
-    push(@{$_SSLinfo{'errors'}}, "do_ssl_open() failed calling $src: $err");
+    push(@{$_SSLinfo{'errors'}}, "do_ssl_open(),TRY failed calling $src: $err");
     if ($trace > 1) {
         Net::SSLeay::print_errs(SSLINFO_ERR);
         print SSLINFO_ERR . $_ foreach @{$_SSLinfo{'errors'}};
@@ -2824,20 +2866,22 @@ Get cipher selected by server for current session. Returns ciphers string.
 
 =head2 cipher_list($pattern)
 
-Get cipher list offered by local SSL implementation. Returns space-separated list of ciphers.
+Get cipher list offered by local SSL implementation (i.g. Net::SSLeay).
+Returns space-separated list of ciphers.
 Returns array if used in array context, a single string otherwise.
 
 Requires successful connection to target.
 
-=head2 ciphers($pattern)
-
-Returns List of ciphers provided for current connection to target.
-
-=head2 cipher_local($pattern)
+=head2 cipher_openssl($pattern)
 
 Get cipher list offered by local openssl implementation. Returns colon-separated list of ciphers.
 
 Does not require connection to any target.
+
+=head2 ciphers($pattern)
+
+Returns List of ciphers provided for current connection to target.
+Calls cipher_list() or cipher_openssl() depending on Net::SSLinfo::use_openssl.
 
 =cut
 
@@ -2860,27 +2904,32 @@ sub cipher_list     {
     return (wantarray) ? @list : join(' ', @list);
 } # cipher_list
 
-sub cipher_local    {
+sub cipher_openssl  {
     my $pattern = shift || $_SSLinfo{'cipherlist'}; # use default if unset
     my $list;
-    _trace("cipher_local($pattern)");
+    _trace("cipher_openssl($pattern)");
     _setcmd();
     _trace("_SSLinfo_get: openssl ciphers $pattern") if ($trace > 1);
     $list = do_openssl("ciphers $pattern", '', '', '');
     chomp  $list;
     return (wantarray) ? split(/[:\s]+/, $list) : $list;
-} # cipher_local
+} # cipher_openssl
 
 ## no critic qw(Subroutines::RequireArgUnpacking)
-sub ciphers         {
-    return cipher_list( @_) if ($Net::SSLinfo::use_openssl == 0);
-    return cipher_local(@_);
-} # ciphers
-
 # "critic Subroutines::RequireArgUnpacking" disabled from hereon for a couple
 # of subs because using explicit variable declarations in each sub would make
 # (human) reading more difficult; it is also ensured that the called function
 # _SSLinfo_get()  does not modify the parameters.
+
+sub cipher_local    {
+    warn("WARNING: function obsolete, please use cipher_openssl()");
+    return cipher_openssl(@_);
+} # cipher_local
+
+sub ciphers         {
+    return cipher_list(   @_) if ($Net::SSLinfo::use_openssl == 0);
+    return cipher_openssl(@_);
+} # ciphers
 
 =pod
 
@@ -3142,7 +3191,7 @@ Get HTTPS Alterenate-Protocol header.
 
 =head2 https_svc( )
 
-Get HTTPS Alt-Svc header.
+Get HTTPS Alt-Svc and X-Firefox-Spdy header.
 
 =head2 https_body( )
 
@@ -3170,7 +3219,7 @@ Get HTTP Alterenate-Protocol header.
 
 =head2 http_svc( )
 
-Get HTTP Alt-Svc header.
+Get HTTP Alt-Svc and X-Firefox-Spdy header.
 
 =head2 http_status( )
 
@@ -3234,6 +3283,7 @@ sub selected        { return _SSLinfo_get('selected',         $_[0], $_[1]); }
 sub cn              { return _SSLinfo_get('cn',               $_[0], $_[1]); }
 sub commonname      { return _SSLinfo_get('cn',               $_[0], $_[1]); } # alias for cn
 sub altname         { return _SSLinfo_get('altname',          $_[0], $_[1]); }
+sub subjectaltnames { return _SSLinfo_get('altname',          $_[0], $_[1]); } # alias for altname
 sub authority       { return _SSLinfo_get('authority',        $_[0], $_[1]); }
 sub owner           { return _SSLinfo_get('owner',            $_[0], $_[1]); } # alias for subject
 sub certificate     { return _SSLinfo_get('certificate',      $_[0], $_[1]); }
@@ -3360,8 +3410,8 @@ sub verify_altname  {
     _trace("verify_altname: $cname");
     foreach my $alt (split(' ', $cname)) {
         my ($type, $name) = split(/:/, $alt);
-# TODO: implement IP and URI
-#dbx print "# ($type, $name)";
+#dbx# print "# $alt: ($type, $name)";
+# TODO: implement IP and URI; see also o-saft.pl: _checkwildcards()
         push(@{$_SSLinfo{'errors'}}, "verify_altname() $type not supported in SNA") if ($type !~ m/DNS/i);
         my $rex = $name;
         if ($Net::SSLinfo::ignore_case == 1) {
@@ -3370,7 +3420,7 @@ sub verify_altname  {
         }
         $rex =~ s/[.]/\\./g;
         if ($name =~ m/[*]/) {
-            $rex =~ s/(\*)/.*?/;
+            $rex =~ s/(\*)/[^.]*/;
         }
         _trace("verify_altname: $host =~ $rex ");
         if ($host =~ /^$rex$/) {

@@ -59,11 +59,13 @@ They must be defined as `our' in L<o-saft.pl|o-saft.pl>:
 
 =item %data
 
-=item %cfg, i.e. trace, traceARG, traceCMD, traceKEY, verbose
+=item %cfg, i.e. trace, traceARG, traceCMD, traceKEY, time_absolut, verbose
 
 =item %checks
 
 =item %dbx
+
+=item $time0
 
 =back
 
@@ -83,11 +85,19 @@ or any I<--trace*>  option, which then loads this file automatically.
 
 =cut
 
+# HACKER's INFO
+#       Following (internal) functions from o-saft.pl are used:
+#	_is_do()
+#	_is_intern()
+#	_is_member()
+#	_need_cipher()
+#	_get_ciphers_range()
+
 ## no critic qw(TestingAndDebugging::RequireUseStrict)
 #  `use strict;' not usefull here, as we mainly use our global variables
 use warnings;
 
-my  $DBX_SID= "@(#) o-saft-dbx.pm 1.53 17/05/16 10:53:27";
+my  $DBX_SID= "@(#) o-saft-dbx.pm 1.61 17/12/06 00:37:30";
 
 package main;   # ensure that main:: variables are used, if not defined herein
 
@@ -105,12 +115,17 @@ no warnings 'once';     ## no critic qw(TestingAndDebugging::ProhibitNoWarnings)
 
 
 # debug functions
-sub _y_ts     { if ($cfg{'traceTIME'} <= 0){ return ""; } return sprintf(" %02s:%02s:%02s", (localtime)[2,1,0]); }
+sub _yTIME    {
+    if ($cfg{'traceTIME'} <= 0) { return ""; }
+    my $now = time() - ($time0 || 0);
+       $now = time() if ($cfg{'time_absolut'} == 1);# $time0 defined in main
+    return sprintf(" %02s:%02s:%02s", (localtime($now))[2,1,0]);
+}
 sub _yeast    { local $\ = "\n"; print "#" . $cfg{'mename'} . ": " . $_[0]; return; }
 sub _y_ARG    { local $\ = "\n"; print "#" . $cfg{'mename'} . " ARG: " . join(" ", @_) if ($cfg{'traceARG'} > 0); return; }
-sub _y_CMD    { local $\ = "\n"; print "#" . $cfg{'mename'} . _y_ts() . " CMD: " . join(" ", @_) if ($cfg{'traceCMD'} > 0); return; }
+sub _y_CMD    { local $\ = "\n"; print "#" . $cfg{'mename'} . _yTIME() . " CMD: " . join(" ", @_) if ($cfg{'traceCMD'} > 0); return; }
 sub _yTRAC    { local $\ = "\n"; printf("#%s: %14s= %s\n", $cfg{'mename'}, $_[0], $_[1]); return; }
-sub _yline    { _yeast("#----------------------------------------------------" . $_[0]); return; }
+sub _yline    { _yeast("#----------------------------------------------------"  . $_[0]); return; }
 sub _y_ARR    { return join(" ", "[", @_, "]"); }
 sub _yeast_trac {}   # forward declaration
 sub _yeast_trac {
@@ -130,8 +145,8 @@ sub _yeast_trac {
         /HASH/  && do { last SWITCH if ($ref->{'trace'} <= 2);      # print hashes for full trace only
                         _yeast("# - - - - HASH: $key = {");
                         foreach my $k (sort keys %{$ref->{$key}}) {
-                            #_yeast_trac($ref, $key); # FIXME: causes infinite loop
-                            _yTRAC("    ".$key."->".$k, ""); # TODO: join("-", @{$ref->{$key}->{$k}}))
+                            #_yeast_trac($ref, ${$ref->{$key}}{$k}); # FIXME:
+                            _yTRAC("    ".$key."->".$k, join("-", ${$ref->{$key}}{$k})); # TODO: fast ok
                         };
                         _yeast("# - - - - HASH: $key }");
                         last SWITCH;
@@ -143,21 +158,23 @@ sub _yeast_trac {
     return;
 } # _yeast_trac
 
-sub _yeast_init {
+sub _yeast_init {   ## no critic qw(Subroutines::ProhibitExcessComplexity)
     #? print important content of %cfg and %cmd hashes
     #? more output if trace>1; full output if trace>2
     return if (($cfg{'trace'} + $cfg{'verbose'}) <= 0);
     my $arg = " (does not exist)";
     if (-f $cfg{'RC-FILE'}) { $arg = " (exists)"; }
+    _yeast("!!Hint: use --trace=2  to see Net::SSLinfo variables") if ($cfg{'trace'} < 2);
+    _yeast("!!Hint: use --trace=2  to see external commands") if ($cfg{'trace'} < 2);
+    _yeast("!!Hint: use --trace=3  to see full %cfg")         if ($cfg{'trace'} < 3);
+    _yeast("#") if ($cfg{'trace'} < 3);
     _yline("");
     _yTRAC("$0", $VERSION);     # $0 is same as $ARG0
     _yTRAC("_yeast_init::SID", $DBX_SID) if ($cfg{'trace'} > 2);
     _yTRAC("::osaft",  $osaft::VERSION);
     _yTRAC("Net::SSLhello", $Net::SSLhello::VERSION) if defined($Net::SSLhello::VERSION);
     _yTRAC("Net::SSLinfo",  $Net::SSLinfo::VERSION);
-    if ($cfg{'trace'} <= 1) {
-        _yeast("!Hint: use --trace=2  to see Net::SSLinfo variables");
-    } else {
+    if ($cfg{'trace'} > 1) {
         _yline(" Net::SSLinfo {");
         _yTRAC("::trace",         $Net::SSLinfo::trace);
         _yTRAC("::linux_debug",   $Net::SSLinfo::linux_debug);
@@ -184,18 +201,28 @@ sub _yeast_init {
     _yTRAC("--no-rc", ((grep{/(?:--no.?rc)$/i} @ARGV) > 0)? 1 : 0);
     _yTRAC("verbose", $cfg{'verbose'});
     _yTRAC("trace",  "$cfg{'trace'}, traceARG=$cfg{'traceARG'}, traceCMD=$cfg{'traceCMD'}, traceKEY=$cfg{'traceKEY'}, traceTIME=$cfg{'traceTIME'}");
+    _yTRAC("time_absolut", $cfg{'time_absolut'});
     # more detailed trace first
-    if ($cfg{'trace'} <= 1) {
-        _yeast("!Hint: use --trace=2  to see external commands");
-    } else {
+    if ($cfg{'trace'} > 1) {
         _yline(" %cmd {");
-        foreach my $key (sort keys %cmd) {
-            _yeast_trac(\%cmd, $key);
-        }
+        foreach my $key (sort keys %cmd) { _yeast_trac(\%cmd, $key); }
         _yline(" %cmd }");
         _yline(" complete %cfg {");
         foreach my $key (sort keys %cfg) {
-            _yeast_trac(\%cfg, $key);
+            if ($key =~ m/(hints|openssl|ssleay)$/) { # sslerror|sslhello|data
+                # FIXME: ugly data structures ... should be done by _yTRAC()
+                _yeast("# - - - - HASH: $key = {");
+                foreach my $k (sort keys %{$cfg{$key}}) {
+                    if ($key eq "openssl") {
+                        _yTRAC($k, _y_ARR(@{$cfg{$key}{$k}}));
+                    } else {
+                        _yTRAC($k, $cfg{$key}{$k});
+                    };
+                };
+                _yeast("# - - - - HASH: $key }");
+            } else {
+                _yeast_trac(\%cfg, $key);
+            }
         }
         _yline(" %cfg }");
     }
@@ -208,7 +235,7 @@ sub _yeast_init {
     _yeast("  cmd->timeout= $cmd{'timeout'}");
     _yeast("  cmd->openssl= $cmd{'openssl'}");
     _yeast("   use_openssl= $cmd{'extopenssl'}");
-    _yeast("openssl cipher= $cmd{'extciphers'}");
+    _yeast("use cipher from openssl= $cmd{'extciphers'}");
     _yline(" cmd }");
     _yline(" user-friendly cfg {");
     _yeast("      ca_depth= $cfg{'ca_depth'}") if defined $cfg{'ca_depth'};
@@ -217,9 +244,12 @@ sub _yeast_init {
     _yeast("       use_SNI= $Net::SSLinfo::use_SNI, force-sni=$cfg{'forcesni'}, sni_name=$cfg{'sni_name'}");
     _yeast("  default port= $cfg{'port'} (last specified)");
     _yeast("       targets= " . _y_ARR(@{$cfg{'hosts'}}));
-    foreach my $key (qw(out_header format legacy usehttp usedns usemx starttls starttls_delay slow_server_delay starttls_phase starttls_error cipherrange)) {
+    foreach my $key (qw(out_header format legacy showhost usehttp usedns usemx starttls starttls_delay slow_server_delay cipherrange)) {
         printf("#%s: %14s= %s\n", $cfg{'mename'}, $key, $cfg{$key});
            # cannot use _yeast() 'cause of pretty printing
+    }
+    foreach my $key (qw(starttls_phase starttls_error)) {
+        _yeast(      "$key= " . _y_ARR(@{$cfg{$key}}));
     }
     _yeast("   SSL version= " . _y_ARR(@{$cfg{'version'}}));
     printf("#%s: %14s= %s", $cfg{'mename'}, "SSL versions", "[ ");
@@ -230,11 +260,52 @@ sub _yeast_init {
     _yeast(" user commands= " . _y_ARR(@{$cfg{'commands-USR'}}));
     _yeast("given commands= " . _y_ARR(@{$cfg{'done'}->{'arg_cmds'}}));
     _yeast("      commands= " . _y_ARR(@{$cfg{'do'}}));
-    _yeast("        cipher= " . _y_ARR(@{$cfg{'cipher'}}));
     _yline(" user-friendly cfg }");
     _yeast("(more information with: --trace=2  or  --trace=3 )") if ($cfg{'trace'} < 1);
+    # $cfg{'ciphers'} may not yet set, print with _yeast_ciphers()
     return;
 } # _yeast_init
+
+sub _yeast_ciphers {
+    #? print ciphers fromc %cfg (output optimized for +cipher and +cipherraw)
+    return if (($cfg{'trace'} + $cfg{'verbose'}) <= 0);
+    _yline(" ciphers {");
+    my $_cnt = scalar @{$cfg{'ciphers'}};
+    my $need = _need_cipher();
+    my $ciphers = "@{$cfg{'ciphers'}}";
+    if (_is_do('cipherraw')) {
+       $need = 1;
+       my @range = $cfg{'cipherranges'}->{$cfg{'cipherrange'}};
+       if ($cfg{'cipherrange'} =~ m/(full|huge|safe)/i) {
+           # avoid huge (useless output)
+           $_cnt = 0xffffff;
+           $_cnt = 0x2fffff if ($cfg{'cipherrange'} =~ m/safe/i);
+           $_cnt = 0xffff   if ($cfg{'cipherrange'} =~ m/huge/i);
+       } else {
+           # expand list
+           @range = _get_ciphers_range(${$cfg{'version'}}[0], $cfg{'cipherrange'});
+              # FIXME: _get_ciphers_range() first arg is the SSL version, which is
+              #        usually unknown here, hence the first is passed
+              #        this my result in a wrong list; but its trace output only
+           $_cnt = scalar @range;
+       }
+       $ciphers = "@range";
+    }
+    _yeast("  _need_cipher= $need");
+    if ($need > 0) {
+        $_cnt = sprintf("%5s", $_cnt); # format count
+        _yeast("      starttls= " . $cfg{'starttls'});
+        if (_is_do('cipherraw')) {
+            _yeast("   cipherrange= " . $cfg{'cipherrange'});
+        } else {
+            _yeast(" cipherpattern= " . $cfg{'cipherpattern'});
+            _yeast("use cipher from openssl= " . $cmd{'extciphers'});
+        }
+        _yeast(" $_cnt ciphers= $ciphers");
+    }
+    _yline(" ciphers }");
+    return;
+} # _yeast_ciphers
 
 sub _yeast_exit {
     if ($cfg{'trace'} > 0) {
@@ -266,8 +337,8 @@ sub _yeast_args {
     _y_ARG("                   RC-FILE= " . $cfg{'RC-FILE'});
     _y_ARG("      from RC-FILE RC-ARGV= ($#{$cfg{'RC-ARGV'}} more args ...)");
     if ($cfg{'verbose'} <= 0) {
-    _y_ARG("      !Hint:  use --v to get the list of all RC-ARGV");
-    _y_ARG("      !Hint:  use --v --v to see the processed RC-ARGV");
+    _y_ARG("      !!Hint:  use --v to get the list of all RC-ARGV");
+    _y_ARG("      !!Hint:  use --v --v to see the processed RC-ARGV");
                   # NOTE: ($cfg{'trace'} does not work here
     }
     _y_ARG("      from RC-FILE RC-ARGV= " . _y_ARR(@{$cfg{'RC-ARGV'}})) if ($cfg{'verbose'} > 0);
@@ -365,7 +436,7 @@ sub _yeast_data {
     .  no score defined in %checks{key}
 
     A shorttext should be available for each command and all data keys, except:
-        cn_nosni, ext_*, valid-*
+        cn_nosni, ext_*, valid_*
 
     Please check following keys, they skipped in table above due to
     ';

@@ -1,5 +1,85 @@
 
-Version: 17.04.21
+Version: 17.11.17
+  BUGFIX
+    * o-saft.cgi: IPv6 addresses are not allowed
+    * do not print prefered cipher for SSLv2, as it has no such cipher
+    * no warning (401) for SSLv2 selected cipher
+    * do not complain about cipher mismatch (warning 411) for SSLv2
+    * missleading hint message for WARNING 126 corrected
+    * check for bit-length of serial number corrected (approx aproach)
+  CHANGES                                                                      
+    * --help=cgi generated HTML for cgi usage improved
+    * +protocols and +vulns documentation added
+    * warnings and hints improved if SNI used with/for SSLv3
+    * remove non-printable characters from HTTPS Status line
+    * Dockerfile: build Net::SSLeay and IO::Socket::SSL based on enhanced openssl-chacha
+    * +cipherall uses same output format as +cipher
+    * documentation improved
+  NEW                                                                          
+    * o-saft.tcl: trace implemented; option --trace
+
+Version: 17.09.17
+  BUGFIX
+    * bugfix: avoid sub-subdomain matching againt subdomain wildcard
+    * bugfix: BEAST check (https://github.com/OWASP/O-Saft/pull/99)
+    * Net::SSLinfo.pm: support timeout commands which require -t option (BusyBox)
+    * Net::SSLinfo.pm: handle binary IP address in certificate's altname attribut
+    * regex to detect port numbers in URL: {1,5} quantifier instead of {1-5}
+    * Dockerfile: install perl-readonly for alpine also
+  CHANGES                                                                      
+    * Dockerfile build openssl with GOST and KRB5 ciphers (for alpine:edge)
+    * Dockerfile supports environment variables
+    * Net::SSLinfo.pm: checking for Alt-Svc, X-Firefox-Spdy headers improved
+  NEW                                                                          
+    * o-saft-docker: checks for proper installed images
+    * o-saft-docker: rmi command implemented; status command improved
+
+Version: 17.07.17
+  BUGFIX
+    * +tr-02102+ corrected (len_sigdump check)
+    * check for redirect HTTP to HTTPs corrected (+http_https)
+    * Net::SSLinfo.pm: do_ssl_new() improved (avoid "Segmentation fault" or "double free or corruption .. Abort" in rare cases)
+    * o-saft.pl: setting ALPN and NPN options with Net::SSLeay improved (avoid "Segmentation fault" in rare cases)
+    * warning message for --experimental corrected
+    * avoid perl warning "Argument isn't numeric" for +tr_02102 checks
+    * osaft.pm: export printhint()
+    * print hint for +info commands also
+  CHANGES                                                                      
+    * check for heartbleed only if requested
+    * hint for DROWN check added
+    * error and warning messages have a unique number
+    * print warning for trailing spaces in options read from RC-file
+    * contrib/gen_standalone.sh: generates working script
+    * *.pl and *.om improved for use with contrib/gen_standalone.sh
+    * o-saft-lib.pm: initialization of %cfg with dynamic data done in _osaft_init()
+    * trace output improved
+    * contrib/* more examples added
+  NEW                                                                          
+    * --connect-delay implemented
+    * --cipher-range=* implemented for +cipher command
+    * OSaft/Doc/Glossary.pm, use OSaft::Doc::Rfc
+    * contrib/JSON-*.awk
+    * o-saft-lib.pm: new cipher-ranges: c0xx, ccxx, ecc
+    * +host command (to display host and DNS information) added
+    * --exit=WARN implemented
+    * --v prints each checked cipher for +cipher
+    * more aliases for commands and options added (mainly from testssl.sh)
+    * new options: --hint-check and --hint-info
+
+Version: 17.06.17
+  BUGFIX
+    * counting exitcode for -exitcode corrected
+    * reading +commands from RC-FILE
+  CHANGES                                                                      
+    * names of +cipher* commands unified
+    * cfg{ciphers_openssl} --> cfg{ciphers_local}
+  NEW                                                                          
+    * --rc=path/to/RC-FILE added
+    * --cfg-cipher=CIPHER=TEXT added
+    * +rfc_2818_names implemented
+    * +subjectaltnames added (alias)
+
+Version: 17.05.17
   BUGFIX
     * o-saft-lib.pm: missing commands added to need-cipher list
     * --protosnpn=, corrected

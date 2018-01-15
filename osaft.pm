@@ -1,18 +1,18 @@
 #!/usr/bin/perl
-## PACKAGE {
 
 # TODO: implement
 #    require "o-saft-lib" "full";  # or "raw"
 #	full: anything for o-saft.pl; raw partial for SSLhello.pm
 # TODO: see comment at %cipher_names
 
+## PACKAGE {
 package osaft;
 
 use strict;
 use warnings;
 
 use constant {
-    OSAFT_VERSION   => '17.05.17',  # official version number of tis file
+    OSAFT_VERSION   => '17.12.13',  # official version number of this file
   # STR_VERSION => 'dd.mm.yy',      # this must be defined in calling program
     STR_ERROR   => "**ERROR: ",
     STR_WARN    => "**WARNING: ",
@@ -21,7 +21,7 @@ use constant {
     STR_DBX     => "#dbx# ",
     STR_UNDEF   => "<<undef>>",
     STR_NOTXT   => "<<>>",
-    OSAFT_SID   => '@(#) o-saft-lib.pm 1.107 17/05/16 11:43:09',
+    OSAFT_SID   => '@(#) o-saft-lib.pm 1.134 17/12/13 15:05:34',
 
 };
 
@@ -203,6 +203,9 @@ our @EXPORT     = qw(
                 %cipher_names
                 %cipher_alias
                 @cipher_results
+                get_cipher_suitename
+                get_cipher_suiteconst
+                get_cipher_suitealias
                 get_cipher_sec
                 get_cipher_ssl
                 get_cipher_enc
@@ -218,6 +221,7 @@ our @EXPORT     = qw(
                 get_openssl_version
                 get_dh_paramter
                 sort_cipher_names
+                printhint
                 osaft_done
 );
 # insert above in vi with:
@@ -250,7 +254,7 @@ our %prot   = (     # collected data for protocols and ciphers
     #-----------------------+--------------+----------------+------------------+---+---+---+---
     # see _prot_init_value() for following values in
     #   "protocol"=> {cnt, -?-, WEAK, LOW, MEDIUM, HIGH, protocol}
-    #   "protocol"=> {pfs_cipher, pfs_ciphers, default, strong_cipher, weak_cipher}
+    #   "protocol"=> {cipher_pfs, ciphers_pfs, default, cipher_strong, cipher_weak}
     # Notes:
     #  TLS1FF   0x03FF  # last possible version of TLS1.x (not specified, used internal)
     #  DTLSv09: 0x0100  # DTLS, OpenSSL pre 0.9.8f, not finally standardized; some versions use 0xFEFF
@@ -273,8 +277,8 @@ our %prot_txt = (
     'LOW'           => "Supported ciphers with security LOW",    #  "
     'MEDIUM'        => "Supported ciphers with security MEDIUM", #  "
     'HIGH'          => "Supported ciphers with security HIGH",   #  "
-    'pfs_ciphers'   => "PFS (all  ciphers)",            # list with PFS ciphers
-    'pfs_cipher'    => "PFS (selected cipher)",         # cipher if offered as default
+    'ciphers_pfs'   => "PFS (all  ciphers)",            # list with PFS ciphers
+    'cipher_pfs'    => "PFS (selected cipher)",         # cipher if offered as default
     'default'       => "Selected  cipher  by server",   # cipher offered as default
     'protocol'      => "Selected protocol by server",   # 1 if selected as default protocol
 ); # %prot_txt
@@ -693,11 +697,11 @@ our %ciphers_desc = (   # description of following %ciphers table
                             # SSLv2, SSLv3, TLSv1, TLSv11, TLSv12, TLSv13, DTLS0.9, DTLS1.0, PCT
                             # NOTE: all SSLv3 are also TLSv1, TLSv11, TLSv12
                             # (cross-checked with sslaudit.ini)
-        'Encryption Algorithm', # None, AES, AESCCM, AESGCM, CAMELLIA, DES, 3DES, FZA, IDEA, RC4, RC2, SEED
+        'Encryption Algorithm', # None, AES, AESCCM, AESGCM, CAMELLIA, DES, 3DES, FZA, IDEA, RC4, RC2, SEED, GOST89
         'Key Size',         # in bits
-        'MAC Algorithm',    # MD5, SHA1, SHA256, SHA384, AEAD
-        'Authentication',   # None, DSS, RSA, ECDH, ECDSA, KRB5, PSK
-        'Key Exchange',     # DH, ECDH, ECDH/ECDSA, RSA, KRB5, PSK, SRP
+        'MAC Algorithm',    # MD5, SHA1, SHA256, SHA384, AEAD, GOST89, GOST94
+        'Authentication',   # None, DSS, RSA, ECDH, ECDSA, KRB5, PSK, GOST01, GOST94
+        'Key Exchange',     # DH, ECDH, ECDH/ECDSA, RSA, KRB5, PSK, SRP, GOST
                             # last column is a : separated list (only export from openssl)
                             # different versions of openssl report  ECDH or ECDH/ECDSA
         'score',            # score value as defined in sslaudit.ini (0, 20, 80, 100)
@@ -931,10 +935,10 @@ our %cipher_names = (
     '0x03000096' => [qw(SEED-SHA                        RSA_WITH_SEED_SHA)],
 #
 #    http://tools.ietf.org/html/draft-mavrogiannopoulos-chacha-tls-01
-    '0x0300CC12' => [qw(RSA-CHACHA20-POLY1305           RSA_WITH_CHACHA20_POLY1305)],       # see Note(c)
-    '0x0300CC13' => [qw(ECDHE-RSA-CHACHA20-POLY1305-SHA256  ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256)], # -"-
+    '0x0300CC12' => [qw(RSA-CHACHA20-POLY1305           RSA_WITH_CHACHA20_POLY1305)],                     # see Note(c)
+    '0x0300CC13' => [qw(ECDHE-RSA-CHACHA20-POLY1305-SHA256  ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256)],    # -"-
     '0x0300CC14' => [qw(ECDHE-ECDSA-CHACHA20-POLY1305-SHA256 ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256)], # -"-
-    '0x0300CC15' => [qw(DHE-RSA-CHACHA20-POLY1305-SHA256   DHE_RSA_WITH_CHACHA20_POLY1305_SHA256)], # -"-
+    '0x0300CC15' => [qw(DHE-RSA-CHACHA20-POLY1305-SHA256   DHE_RSA_WITH_CHACHA20_POLY1305_SHA256)],       # -"-
     '0x0300CC20' => [qw(RSA-CHACHA20-SHA                RSA_WITH_CHACHA20_SHA)],
     '0x0300CC21' => [qw(ECDHE-RSA-CHACHA20-SHA          ECDHE_RSA_WITH_CHACHA20_SHA)],
     '0x0300CC22' => [qw(ECDHE-ECDSA-CHACHA20-SHA        ECDHE_ECDSA_WITH_CHACHA20_SHA)],
@@ -1067,10 +1071,10 @@ our %cipher_names = (
     '0x0300C06F' => [qw(RSA-PSK-ARIA256-GCM-SHA384      RSA_PSK_WITH_ARIA_256_GCM_SHA384    )],
     '0x0300C070' => [qw(ECDHE-PSK-ARIA128-SHA256        ECDHE_PSK_WITH_ARIA_128_CBC_SHA256  )],
     '0x0300C071' => [qw(ECDHE-PSK-ARIA256-SHA384        ECDHE_PSK_WITH_ARIA_256_CBC_SHA384  )],
-    '0x0300FEE0' => [qw(RSA-FIPS-3DES-EDE-SHA           RSA_FIPS_WITH_3DES_EDE_CBC_SHA)],
-    '0x0300FEE1' => [qw(RSA-FIPS-DES-CBC-SHA            RSA_FIPS_WITH_DES_CBC_SHA)],
-    '0x0300FEFE' => [qw(RSA-FIPS-DES-CBC-SHA            RSA_FIPS_WITH_DES_CBC_SHA)],
-    '0x0300FEFF' => [qw(RSA-FIPS-3DES-EDE-SHA           RSA_FIPS_WITH_3DES_EDE_CBC_SHA)],
+    '0x0300FEE0' => [qw(RSA-FIPS-3DES-EDE-SHA           RSA_FIPS_WITH_3DES_EDE_CBC_SHA)],  # unklar
+    '0x0300FEE1' => [qw(RSA-FIPS-DES-CBC-SHA            RSA_FIPS_WITH_DES_CBC_SHA)],       # unklar,
+    '0x0300FEFE' => [qw(RSA-FIPS-DES-CBC-SHA            RSA_FIPS_WITH_DES_CBC_SHA)],       # openssl-chacha
+    '0x0300FEFF' => [qw(RSA-FIPS-3DES-EDE-SHA           RSA_FIPS_WITH_3DES_EDE_CBC_SHA)],  # openssl-chacha
 #
     '0x03000080' => [qw(GOST94-GOST89-GOST89            GOSTR341094_WITH_28147_CNT_IMIT)], #ok
     '0x03000081' => [qw(GOST2001-GOST89-GOST89          GOSTR341001_WITH_28147_CNT_IMIT)], #ok
@@ -1080,8 +1084,8 @@ our %cipher_names = (
     '0x0300FF00' => [qw(GOST-MD5                        GOSTR341094_RSA_WITH_28147_CNT_MD5)],
     '0x0300FF01' => [qw(GOST-GOST94                     RSA_WITH_28147_CNT_GOST94)],
 #    '0x0300FF01' => [qw(GOST2001-NULL-GOST94           GOSTR341001_WITH_NULL_GOSTR3411)], # unklar da nummer doppelt
-    '0x0300FF02' => [qw(GOST-GOST89MAC                  -?-)],
-    '0x0300FF03' => [qw(GOST-GOST89STREAM               -?-)],
+    '0x0300FF02' => [qw(GOST-GOST89MAC                  GOST-GOST89MAC)],                  # openssl-chacha
+    '0x0300FF03' => [qw(GOST-GOST89STREAM               GOST-GOST89STREAM)],               # openssl-chacha
 # TODO:  following PCT...
     '0x00800001' => [qw(PCT_SSL_CERT_TYPE               PCT1_CERT_X509)],
     '0x00800003' => [qw(PCT_SSL_CERT_TYPE               PCT1_CERT_X509_CHAIN)],
@@ -1105,7 +1109,8 @@ our %cipher_names = (
     #   see also: http://tools.ietf.org/html/draft-mavrogiannopoulos-chacha-tls-05
 ); # %cipher_names
 
-our %cipher_alias = ( # TODO: list not yet used
+our %cipher_alias = (
+    # TODO: only one element allowed
     #!#----------+-------------------------------------+--------------------------+
     #!# constant =>     cipher suite name alias        # comment (where found)
     #!#----------+-------------------------------------+--------------------------+
@@ -1164,8 +1169,18 @@ our %cipher_alias = ( # TODO: list not yet used
     #!#----------+-------------------------------------+--------------------------+
 ); # %cipher_alias
 
+our %cipher_old   = (
+    # TODO: only one element allowed (not needed in OSaft/Ciphers.pm)
+    #!#----------+-------------------------------------+--------------------------+
+    #!# constant =>     cipher suite name alias        # comment (where found)
+    #!#----------+-------------------------------------+--------------------------+
+    '0x0300CC13' => [qw(ECDHE-RSA-CHACHA20-POLY1305-OLD)],  # openssl-chacha
+    '0x0300CC14' => [qw(ECDHE-ECDSA-CHACHA20-POLY1305-OLD)],# -"-
+    '0x0300CC15' => [qw(DHE-RSA-CHACHA20-POLY1305-OLD)],    # -"-
+    #!#----------+-------------------------------------+--------------------------+
+); # %cipher_old
 
-our @cipher_results = [
+our @cipher_results = [ # list of checked ciphers
 # currently (12/2015)
 #   [ sslv3, rc4-md5, yes ]
 #   [ sslv3, NULL,    no ]
@@ -1189,18 +1204,16 @@ our @cipher_results = [
 
 ]; # @cipher_results
 
-my $me =  $0;
-   $me =~ s#.*[/\\]##;
-
 our %cfg = (
-    'me'            => $me,
     'mename'        => "O-Saft ", # my name pretty printed
-    'ARG0'          => $0,
-    'ARGV'          => [@ARGV], # arguments passed on command line
-    'RC-ARGV'       => [],      # arguments read from RC-FILE (set in caller)
-    'RC-FILE'       => "./.$me",# our RC-FILE, search in pwd only!
     'need_netdns'   => 0,       # used for better error message handling only
     'need_timelocal'=> 0,       # -"-
+    # following initialized in _osaft_init()
+    'me'            => "",
+    'ARG0'          => "",
+    'ARGV'          => [],      # arguments passed on command line
+    'RC-ARGV'       => [],      # arguments read from RC-FILE (set in caller)
+    'RC-FILE'       => "",      # our RC-FILE, search in pwd only!
 
    # config. key        default   description
    #------------------+---------+----------------------------------------------
@@ -1213,11 +1226,11 @@ our %cfg = (
     'traceCMD'      => 0,       # 1: trace command processing
     'traceKEY'      => 0,       # 1: (trace) print yeast's internal variable names
     'traceTIME'     => 0,       # 1: (trace) print additiona time for benchmarking
+    'time_absolut'  => 0,       # 1: (trace) --traceTIME uses absolut timstamps
     'linux_debug'   => 0,       # passed to Net::SSLeay::linux_debug
     'verbose'       => 0,       # used for --v
     'v_cipher'      => 0,       # used for --v-cipher
     'warning'       => 1,       # 1: print warnings; 0: don't print warnings
-    'hint'          => 1,       # 1: print hints; 0: don't print hints
     'proxyhost'     => "",      # FQDN or IP of proxy to be used
     'proxyport'     => 0,       # port for proxy
     'proxyauth'     => "",      # authentication string used for proxy
@@ -1226,10 +1239,11 @@ our %cfg = (
     'starttls'      => "",      # use STARTTLS if not empty
                                 # protocol to be used with STARTTLS; default: SMTP
                                 # valid protocols: SMTP, IMAP, IMAP2, POP3, FTPS, LDAP, RDP, XMPP
-    'slow_server_delay' => 0,   # time to wait in seconds after a connection via proxy or before starting STARTTLS sequence
     'starttls_delay'=> 0,       # STARTTLS: time to wait in seconds (to slow down the requests)
     'starttls_phase'=> [],      # STARTTLS: Array for customized STARTTLS sequences
     'starttls_error'=> [],      # STARTTLS: Array for customized STARTTLS sequences error handling
+    'slow_server_delay' => 0,   # time to wait in seconds after a connection via proxy or before starting STARTTLS sequence
+    'connect_delay' => 0,       # time to wait in seconds for starting next cipher check
     'socket_reuse'  => 1,       # 0: close and reopen sockets when SSL connect fails
                                 # 1: reuse existing sockets, even if SSL connect failed
     'enabled'       => 0,       # 1: only print enabled ciphers
@@ -1371,11 +1385,19 @@ our %cfg = (
                         0x0300FEE0,   0x0300FEE1, 0x0300FEFE, 0x0300FEFF,
                        ",
                        # 0x03000000 .. 0x0300002F, 0x030000FF,   # old SSLv3 ciphers
+        'c0xx'      => "0x0300C000 .. 0x0300C0FF",  # constants for ciphers using ecc
+        'ccxx'      => "0x0300CC00 .. 0x0300CCFF",  # constants for ciphers using ecc
+        'ecc'       =>          # constants for ciphers using ecc
+                       "0x0300C000 .. 0x0300C0FF,
+                        0x0300CC00 .. 0x0300CCFF,
+                       ",
     }, # cipherranges
     'cipher_dh'     => 0,       # 1: +cipher also prints DH parameters (default will be changed in future)
     'cipher_md5'    => 1,       # 0: +cipher does not use *-MD5 ciphers except for SSLv2
-    'cipher_alpn'   => 1,       # 0: +cipher does not use ALPN
-    'cipher_npn'    => 1,       # 0: +cipher does not use  NPN ($Net::SSLinfo::use_nextprot is for openssl only)
+   #{ removed 10/2017 as they are not used
+   #'cipher_alpn'   => 1,       # 0: +cipher does not use ALPN
+   #'cipher_npn'    => 1,       # 0: +cipher does not use  NPN ($Net::SSLinfo::use_nextprot is for openssl only)
+   #}
     'cipher_ecdh'   => 1,       # 0: +cipher does not use TLS curves extension
     'cipher_alpns'  => [],      # contains all protocols to be passed for +cipher checks
     'cipher_npns'   => [],      # contains all protocols to be passed for +cipher checks
@@ -1389,6 +1411,9 @@ our %cfg = (
    #     cmd-*      - list for "summary" commands, can be redifined by user
    #     need-*     - list of commands which need a speciphic check
    #
+   # TODO: need to unify  cmd-* and need-* and regex->cmd-*;
+   #       see also _need_* functions and "construct list for special commands"
+   #       in o-saft.pl
    # config. key        list      description
    #------------------+---------+----------------------------------------------
     'do'            => [],      # commands to be performed
@@ -1408,12 +1433,12 @@ our %cfg = (
                         qw(
                          check cipher dump check_sni exec help info info--v http
                          quick list libversion sizes s_client version quit
-                         sigkey bsi ev cipherraw cipher_dh cipher_default
+                         sigkey bsi ev cipherall cipherraw cipher_dh cipher_default
                         ),
                                 # internal (debugging) commands
                       # qw(options cert_type),  # will be seen with +info--v only
                                 # keys not used as command
-                        qw(cn_nosni valid-years valid-months valid-days)
+                        qw(cn_nosni valid_years valid_months valid_days valid_host)
                        ],
     'commands-HINT' => [        # checks which are NOT YET fully implemented
                                 # these are mainly all commands for compliance
@@ -1425,6 +1450,7 @@ our %cfg = (
     'cmd-drown'     => [qw(drown)],                 # commands for +drown
     'cmd-freak'     => [qw(freak)],                 # commands for +freak
     'cmd-lucky13'   => [qw(lucky13)],               # commands for +lucky13
+    'cmd-robot'     => [qw(robot)],                 # commands for +robot
     'cmd-sweet32'   => [qw(sweet32)],               # commands for +sweet32
     'cmd-http'      => [],      # commands for +http, computed below
     'cmd-hsts'      => [],      # commands for +hsts, computed below
@@ -1434,61 +1460,94 @@ our %cfg = (
     'cmd-sizes'     => [],      # commands for +sizes
     'cmd-quick'     => [        # commands for +quick
                         qw(
-                         selected cipher fingerprint_hash fp_not_md5 
-                         sha2signature pub_encryption pub_enc_known email serial
-                         subject dates verify expansion compression hostname
-                         beast crime drown freak export cbc_cipher des_cipher rc4_cipher rc4 
-                         pfs_cipher crl
-                         hassslv2 hassslv3 poodle sloth sweet32
-                         resumption renegotiation tr_02102+ tr_02102- rfc_7525 hsts_sts
+                         sslversion hassslv2 hassslv3 hastls12
+                         cipher_selected cipher_strong cipher_null cipher_adh
+                         cipher_exp cipher_cbc cipher_des cipher_rc4 cipher_edh
+                         cipher_pfs beast crime drown freak heartbleed logjam
+                         lucky13 poodle rc4 robot sloth sweet32
+                         fingerprint_hash fp_not_md5 sha2signature pub_encryption
+                         pub_enc_known email serial subject dates verify heartbeat
+                         expansion compression hostname hsts_sts crl
+                         resumption renegotiation tr_02102+ tr_02102- rfc_7525
                        )],
     'cmd-ev'        => [qw(cn subject altname dv ev ev- ev+ ev_chars)], # commands for +ev
     'cmd-bsi'       => [        # commands for +bsi
                                 # see also: commands-HINT
-                        qw(after dates crl rc4_cipher renegotiation
+                        qw(after dates crl cipher_rc4 renegotiation
                            tr_02102+ tr_02102- tr_03116+ tr_03116- 
                        )],
-    'cmd-pfs'       => [qw(pfs_cipher pfs_cipherall session_random)],   # commands for +pfs
+    'cmd-pfs'       => [qw(cipher_pfs cipher_pfsall session_random)],   # commands for +pfs
     'cmd-sni'       => [qw(sni hostname)],          # commands for +sni
     'cmd-sni--v'    => [qw(sni cn altname verify_altname verify_hostname hostname wildhost wildcard)],
     'cmd-vulns'     => [        # commands for checking known vulnerabilities
-                        qw(beast breach crime drown freak heartbleed logjam lucky13 poodle rc4 sloth sweet32 time hassslv2 hassslv3 pfs_cipher session_random)
+                        qw(
+                         beast breach crime drown freak heartbleed logjam
+                         lucky13 poodle rc4 robot sloth sweet32 time
+                         hassslv2 hassslv3 cipher_pfs session_random
+                       )],
                        #qw(resumption renegotiation) # die auch?
-                       ],
     'cmd-prots'     => [        # commands for checking protocols
                         qw(hassslv2 hassslv3 hastls10 hastls11 hastls12 hastls13 hasalpn hasnpn session_protocol fallback_protocol alpn alpns npns next_protocols https_protocols http_protocols https_svc http_svc)
                        ],
-    'ignore-out'    => [],      # commands (output) to be ignored, see --no-cmd
-                    # Results of these commands are not printed in output.
-                    # Purpose is to avoid output of noicy commands  (like some
-                    # +bsi*).  All data collections and checks are still done,
-                    # just output of results is omitted.
-                    # Technically these commands are not removed from cfg{do},
-                    # but just skipped in printdata() and printchecks(), which
-                    # makes implementation much easier.
-                    # need-* lists used to improve performance
+    'ignore-out'    => [],      # commands (output) to be ignored, SEE Note:ignore-out
     'cmd-NL'        => [        # commands which need NL when printed
                                 # they should be available with +info --v only 
                         qw(certificate extensions pem pubkey sigdump text chain chain_verify)
                        ],
+                    # need-* lists used to improve performance and warning messages
+    'need-sslv3'    => [        # commands which need SSLv3 protocol
+                        qw(check cipher cipher_dh cipher_strong cipher_selected
+                         protocols hassslv3 beast freak poodle
+                         tr_02102+ tr_02102- tr_03116+ tr_03116- rfc_7525
+                       )],
     'need-cipher'   => [        # commands which need +cipher
-                        qw(check cipher cipher_dh),
-                        qw(null_cipher adh_cipher exp_cipher cbc_cipher des_cipher),
-                        qw(edh_cipher rc4_cipher rc4 pfs_cipher pfs_cipherall),
-                        qw(beast crime time breach drown freak logjam lucky13 poodle sloth sweet32),
-                        qw(tr_02102+ tr_02102- tr_03116+ tr_03116- rfc_7525),
-                        qw(hassslv2 hassslv3 hastls10 hastls11 hastls12 hastls13), # TODO: need simple check for protocols
-                       ],
+                        qw(check cipher cipher_dh cipher_strong
+                         cipher_null cipher_adh cipher_cbc cipher_des cipher_edh
+                         cipher_exp  cipher_rc4 cipher_pfs cipher_pfsall
+                         beast crime time breach drown freak logjam
+                         lucky13 poodle rc4 robot sloth sweet32
+                         tr_02102+ tr_02102- tr_03116+ tr_03116- rfc_7525
+                         hassslv2 hassslv3 hastls10 hastls11 hastls12 hastls13
+                       )],
+                                # TODO: need simple check for protocols
     'need-default'  => [        # commands which need selected cipher
-                        qw(check cipher pfs_cipher order_cipher strong_cipher cipher_default selected),
+                        qw(check cipher cipherall cipher_default
+                           cipher_pfs cipher_order cipher_strong cipher_selected),
                         qw(sslv3  tlsv1   tlsv10  tlsv11 tlsv12),
                                 # following checks may cause errors because
                                 # missing functionality (i.e in openssl) # 10/2015
                         qw(sslv2  tlsv13  dtlsv09 dtlvs1 dtlsv11 dtlsv12 dtlsv13)
                        ],
     'need-checkssl' => [        # commands which need checkssl() # TODO: needs to be verified
-                        qw(check beast crime time breach freak pfs_cipher pfs_cipherall cbc_cipher des_cipher rc4_cipher rc4 selected ev+ ev-),
-                        qw(tr_02102+ tr_02102- tr_03116+ tr_03116- rfc_7525 rfc_6125_names),
+                        qw(check beast crime time breach freak
+                         cipher_pfs cipher_pfsall cipher_cbc cipher_des
+                         cipher_edh cipher_exp cipher_rc4 cipher_selected
+                         ev+ ev- tr_02102+ tr_02102- tr_03116+ tr_03116-
+                         rfc_7525 rfc_6125_names rfc_2818_names
+                       )],
+    'need-checkalnp'=> [        # commands which need checkalpn()
+                        qw(alpns alpn hasalpn npns npn hasnpn),
+                       ],
+    'need-checkbleed'   => [ qw(heartbleed) ],
+    'need-check_dh' => [        # commands which need check_dh()
+                        qw(logjam dh_512 dh_2048 ecdh_256 ecdh_512)
+                       ],
+    'need-checkdest'=> [        # commands which need checkprot()
+                        qw(reversehost ip resumption renegotiation
+                         session_protocol session_ticket session_random session_lifetime
+                         krb5 psk_hint psk_identity srp heartbeat
+                         cipher_selected cipher_pfs crime
+                       )],
+    'need-checkhttp'=> [qw(pkp_pins)],  # commands which need checkhttp(); more will be added in _init
+    'need-checkprot'=> [        # commands which need checkprot(), should be same as in 'cmd-prots'
+                        qw(
+                         sslversion
+                         hassslv2 hassslv3 hastls10 hastls11 hastls12 hastls13
+                         alpns alpn hasalpn npns npn hasnpn
+                         crime drown poodle
+                       )],
+    'need-checksni' => [        # commands which need checksni()
+                        qw(hostname certfqdn cn cn_nosni sni)
                        ],
     'need-checkchr' => [        # commands which always need checking various characters
                         qw(cn subject issuer altname ext_crl ocsp_uri),
@@ -1511,6 +1570,10 @@ our %cfg = (
     'formats'       => [qw(csv html json ssv tab xml fullxml raw hex 0x esc)],
     'out_header'    => 0,       # print header lines in output
     'out_score'     => 0,       # print scoring; default for +check
+    'out_hint'      => 1,       # 1: print hints; 0: don't print hints
+    'out_hint_cipher'   => 1,   # 1: print hints for +cipher command
+    'out_hint_check'=> 1,       # 1: print hints for +check commands
+    'out_hint_info' => 1,       # 1: print hints for +info commands
     'tmplib'        => "/tmp/yeast-openssl/",   # temp. directory for openssl and its libraries
     'pass_options'  => "",      # options to be passeed thru to other programs
     'mx_domains'    => [],      # list of mx-domain:port to be processed
@@ -1586,6 +1649,9 @@ our %cfg = (
                                 # following are NOT YET fully implemented:
         'delay'     => 0,       # if > 0 continue trying to connect after this time
         'per_prot'  => 1,       # if > 0 detection and count are per SSL version
+        'ignore_no_conn'   => 0,# 0: ignore warnings if connection fails, check target anyway
+                                # 1: print  warnings if connection fails, don't check target
+        'ignore_handshake' => 1,# 1: treat "failed handshake" as error,   don't check target
     },
     'sslhello' =>   {  # configurations for TCP SSL protocol (mainly used in Net::SSLhello)
         'timeout'   => 2,       # timeout to receive ssl-answer
@@ -1621,8 +1687,8 @@ our %cfg = (
         'cmd-http'  => '^h?(?:ttps?|sts)_',     # match keys for HTTP
         'cmd-hsts'  => '^h?sts',                # match keys for (H)STS
         'cmd-sizes' => '^(?:cnt|len)_',         # match keys for length, sizes etc.
-        'cmd-cfg'   => '(?:cmd|checks?|data|hint|text|scores?)',# --cfg-* commands
-        'commands-INT'  => '^(?:cn_nosni|valid-(?:year|month|day)s)', # internal data only, no command
+        'cmd-cfg'   => '(?:cmd|checks?|data|info|hint|text|scores?)',# --cfg-* commands
+        'commands-INT'  => '^(?:cn_nosni|valid_(?:year|month|day|host)s?)', # internal data only, no command
         'opt-empty' => '(?:[+]|--)(?:cmd|help|host|port|format|legacy|timeout|trace|openssl|(?:cipher|proxy|sep|starttls|exe|lib|ca-|cfg-|ssl-|usr-).*)',
                        # these options may have no value
                        # i.e.  --cmd=   ; this may occour in CGI mode
@@ -1697,15 +1763,18 @@ our %cfg = (
             # must be used programatically.
             # Key 'TYPE' must match and key 'notTYPE' must not match.
         # The following RegEx define what is "vulnerable":
-        'BEAST'     => '^(?:SSL[23]?|TLS[12]|PCT1?[_-])?(?:ARC(?:4|FOUR)|RC4)',
+        'BEAST'     => '^(?:SSL[23]?|TLS[12]|PCT1?[_-])?.*?[_-]CBC',# borrowed from 'Lucky13'. There may be another better RegEx.
 #       'BREACH'    => '^(?:SSL[23]?|TLS[12]|PCT1?[_-])?',
         'FREAK'     => '^(?:SSL[23]?)?(?:EXP(?:ORT)?(?:40|56|1024)?[_-])',
                        # EXP? is same as regex{EXPORT} above
         'notCRIME'  => '(?:NONE|NULL|^\s*$)',   # same as nocompression (see above)
 #       'TIME'      => '^(?:SSL[23]?|TLS[12]|PCT1?[_-])?',
         'Lucky13'   => '^(?:SSL[23]?|TLS[12]|PCT1?[_-])?.*?[_-]CBC',
-        'Logjam'    => 'EXP(?:ORT)?(?:40|56|1024)?[_-]',    # match against cipher
+        'Logjam'    => 'EXP(?:ORT)?(?:40|56|1024)?[_-]',        # match against cipher
                        # Logjam is same as regex{EXPORT} above
+        'ROBOT'     => '^(?:(?:SSLv?3|TLSv?1(?:[12]))[_-])?(?:A?DH[_-])?(RC2|RC4|RSA)[_-]',
+        'notROBOT'  => '(?:(?:EC)?DHE[_-])',                    # match against cipher
+                       # ROBOT are all TLS_RCA except those with DHE or ECDHE
         'SLOTH'     => '(?:(EXP(?:ORT)?|NULL).*MD5$|EC(?:DHE|EDH)[_-]ECDSA[_-].*(?:MD5|SHA)$)',
         'Sweet32'   => '(?:[_-](?:CBC||CBC3|3DES|DES|192)[_-])',# match against cipher
         'notSweet32'=> '(?:[_-]AES[_-])',                       # match against cipher
@@ -1782,9 +1851,9 @@ our %cfg = (
         # This allows that the texts can be customised using the option:
         #   --cfg-hints=your-key="other text"
         # How automatic printing works:
-        #   Hint texts can be defined for any valid command (see abobe). When
-        #   results are printed,  print_check() will automatically print such
-        #   hint texts if any.
+        #   Hint texts can be defined for any valid command (see above). When
+        #   results are printed,  print_check() and print_data()  will  auto-
+        #   matically print such hint texts if any.
         # However, hint texts can be printed anywhere at anytime using:
         #   printhint('your-key'),
         # It is not recommended to use:
@@ -1895,16 +1964,15 @@ our %dbx = (    # save hardcoded settings (command lists, texts), and debugging 
 #_____________________________________________________________________________
 #__________________________________________________________________ methods __|
 
-# TODO: interanl wrappers for main's methods
-sub _trace(@)   { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
-sub _trace0(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
-sub _trace1(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
-sub _trace2(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
-sub _trace3(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
-
-sub _warn(@)    { ::_warn(@_);  return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
-
 =pod
+
+=head2 get_cipher_suitename($cipher)
+
+=head2 get_cipher_suiteconst($cipher)
+
+=head2 get_cipher_suitealias($cipher)
+
+Get information from internal C<%cipher_names> data structure.
 
 =head2 get_cipher_sec($cipher)
 
@@ -1930,6 +1998,10 @@ Get information from internal C<%cipher> data structure.
 
 =cut
 
+sub get_cipher_suitename { my $c=shift; return $cipher_names{$c}[0] if (defined $cipher_names{$c}[0]); return ""; }
+sub get_cipher_suiteconst{ my $c=shift; return $cipher_names{$c}[1] if (defined $cipher_names{$c}[1]); return ""; }
+sub get_cipher_suitealias{ my $c=shift; return $cipher_alias{$c}[0] if (defined $cipher_alias{$c}[0]); return ""; }
+
 # some people prefer to use a getter function to get data from objects
 # each function returns a spcific value (column) from the %cipher table
 # see %ciphers_desc about description of the columns
@@ -1946,7 +2018,7 @@ sub get_cipher_tags($) { my $c=shift; return $ciphers{$c}[8] || "" if ((grep{/^$
 sub get_cipher_desc($) { my $c=shift;
     # get description for specified cipher from %ciphers
     if (! defined $ciphers{$c}) {
-       _warn("undefined cipher description for '$c'"); # TODO: correct %ciphers
+       _warn("016: undefined cipher description for '$c'"); # TODO: correct %ciphers
        return STR_UNDEF;
     }
     my @c = @{$ciphers{$c}};
@@ -1972,10 +2044,13 @@ sub get_cipher_hex($)  {
     # FIXME: need $ssl parameter because of duplicate names (SSLv3, TLSv19
     my $c = shift;
     foreach my $k (keys %cipher_names) { # database up to VERSION 14.07.14
-        return $k if (($cipher_names{$k}[0] eq $c) or ($cipher_names{$k}[1] eq $c));
+        return $k if ((get_cipher_suitename($k) eq $c) or (get_cipher_suiteconst($k) eq $c));
     }
     foreach my $k (keys %cipher_alias) { # not yet found, check for alias
         return $k if ($cipher_alias{$k}[0] eq $c);
+    }
+    foreach my $k (keys %cipher_old) {   # not yet found, check old names
+        return $k if ($cipher_old{$k}[0] eq $c);
     }
     return "";
 } # get_cipher_hex
@@ -1988,14 +2063,16 @@ sub get_cipher_name($) {
     return $cipher if ((grep{/^$cipher/} %ciphers)>0);
     _trace("get_cipher_name: search $cipher");
     foreach my $k (keys %cipher_names) {
-        return $cipher_names{$k}[0] if ($cipher =~ m/$cipher_names{$k}[0]/);
-        return $cipher_names{$k}[0] if ($cipher_names{$k}[1] =~ /$cipher/);
+        my $suite = get_cipher_suitename($k);
+        return $suite if ($cipher =~ m/$cipher_names{$k}[0]/);
+        return $suite if (get_cipher_suiteconst($k) =~ /$cipher/);
     }
     # nothing found yet, try more lazy match
     foreach my $k (keys %cipher_names) {
-        if ($cipher_names{$k}[0] =~ m/$cipher/) {
-            _warn("partial match for cipher name found '$cipher'");
-            return $cipher_names{$k}[0];
+        my $suite = get_cipher_suitename($k);
+        if ($suite =~ m/$cipher/) {
+            _warn("017: partial match for cipher name found '$cipher'");
+            return $suite;
         }
     }
     return "";
@@ -2118,7 +2195,7 @@ sub sort_cipher_names   {
     my @ciphers = @_;
     my @sorted  ;
     my @latest  ;
-    my $cnt     = scalar @ciphers;  # number of passed ciphers; see check at end
+    my $cnt_in  = scalar @ciphers;  # number of passed ciphers; see check at end
 
     # Algorithm:
     #  1. remove all known @insecure ciphers from given list
@@ -2168,9 +2245,11 @@ sub sort_cipher_names   {
         qw(ECDH[_-].*?384) ,
         qw(ECDH[_-].*?256) ,
         qw(ECDH[_-].*?128) ,
-        qw(AES) ,                       # 5. all AES
+        qw(AES) ,                       # 5. all AES and specials
+        qw(KRB5) ,
         qw(SRP) ,
         qw(PSK) ,
+        qw(GOST) ,
         qw((?:EDH|DHE).*?CHACHA) ,      # 6. all DH
         qw((?:EDH|DHE).*?512) ,
         qw((?:EDH|DHE).*?384) ,
@@ -2202,14 +2281,15 @@ sub sort_cipher_names   {
         @ciphers    = grep{!/$rex/} @ciphers;   # remove matches from original list
     }
     push(@sorted, @latest);                     # add insecure ciphers again
-    my $num = scalar @sorted;
-    if ($cnt != $num) {
-        # print warning if above algorithm misses ciphers; uses perl's  warn()
-        # instead of our _warn() to clearly inform the user that the code here
-        # needs to be fixed
-        warn STR_WARN . "missing ciphers in sorted list: $num < $cnt"; ## no critic qw(ErrorHandling::RequireCarping)
+    my $cnt_out = scalar @sorted;
+    if ($cnt_in != $cnt_out) {
+        # print warning if above algorithm misses ciphers;
+        # uses perl's warn() instead of our _warn() to clearly inform the user
+        # that the code here needs to be fixed
+        warn STR_WARN . "015: missing ciphers in sorted list: $cnt_out < $cnt_in"; ## no critic qw(ErrorHandling::RequireCarping)
         #dbx# print "## ".@sorted . " # @ciphers";
     }
+    @sorted = grep{!/^\s*$/} @sorted;           # remove empty names, if any ...
     return @sorted;
 } # sort_cipher_names
 
@@ -2225,11 +2305,11 @@ sub _prot_init_value {
         $prot{$ssl}->{'MEDIUM'}         = 0;
         $prot{$ssl}->{'HIGH'}           = 0;
         $prot{$ssl}->{'protocol'}       = 0;
-        $prot{$ssl}->{'pfs_ciphers'}    = [];
-        $prot{$ssl}->{'pfs_cipher'}     = STR_UNDEF;
+        $prot{$ssl}->{'ciphers_pfs'}    = [];
+        $prot{$ssl}->{'cipher_pfs'}     = STR_UNDEF;
         $prot{$ssl}->{'default'}        = STR_UNDEF;
-        $prot{$ssl}->{'strong_cipher'}  = STR_UNDEF;
-        $prot{$ssl}->{'weak_cipher'}    = STR_UNDEF;
+        $prot{$ssl}->{'cipher_strong'}  = STR_UNDEF;
+        $prot{$ssl}->{'cipher_weak'}    = STR_UNDEF;
     }
     return;
 } # _prot_init_value
@@ -2284,6 +2364,12 @@ sub _dbx_init   {
 
 sub _osaft_init {
     #? additional generic initializations for data structures
+    my $me =  $0;       # done here to instead of package's "main" to avoid
+       $me =~ s#.*[/\\]##;  # multiple variable definitions of $me
+    $cfg{'me'}      = $me;
+    $cfg{'RC-FILE'} = "./.$me";
+    $cfg{'ARG0'}    = $0;
+    $cfg{'ARGV'}    = [@ARGV];
     _prot_init_value(); # initallize WEAK, LOW, MEDIUM, HIGH, default, pfs, protocol
     _cfg_init();        # initallize dynamic data in %cfg
     _cmd_init();        # initallize dynamic commands in %cfg
@@ -2306,11 +2392,10 @@ Print hint for specified command, additionl text will be appended.
 Wrapper to simulate "slee" with perl's select.
 =cut
 
-sub printhint   {
+sub printhint   {   ## no critic qw(Subroutines::RequireArgUnpacking) # buggy perlcritic
     #? Print hint for specified command.
+    my $cmd  = shift;
     my @args = @_;
-    return if ($cfg{'hint'} <= 0);
-    my $cmd = shift;
     print STR_HINT, $cfg{'hints'}->{$cmd}, join(" ", @args) if (defined $cfg{'hints'}->{$cmd});
     return;
 } # printhint
@@ -2325,6 +2410,8 @@ sub osaft_sleep {
 sub osaft_done() {};    # dummy to check successful include
 
 _osaft_init();          # complete initializations
+
+## PACKAGE }
 
 #_____________________________________________________________________________
 #_____________________________________________________ public documentation __|
@@ -2347,11 +2434,18 @@ purpose of this module is defining variables. Hence we export them.
 
 =cut
 
-## PACKAGE }
-
-
 #_____________________________________________________________________________
 #_____________________________________________________________________ self __|
+
+# TODO: interanl wrappers for main's methods
+#       they are defined after the  ## PACKAGE  mark to avoid errors in the
+#       script generated by contrib/gen_standalone.sh
+sub _trace(@)   { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
+sub _trace0(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
+sub _trace1(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
+sub _trace2(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
+sub _trace3(@)  { ::_trace(@_); return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
+sub _warn(@)    { ::_warn(@_);  return; }   ## no critic qw(Subroutines::RequireArgUnpacking)
 
 unless (defined caller) {       # print myself or open connection
     printf("# %s %s\n", __PACKAGE__, $VERSION);

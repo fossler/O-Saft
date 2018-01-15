@@ -27,7 +27,7 @@
 ###
 #--openssl=/usr/local/bin/openssl
 #--openssl-cnf=
-#--force-openssl 
+#--force-openssl
 ### or
 #--lib=/usr/local/lib
 
@@ -129,12 +129,19 @@
 # +ciphers shows which ciphers are accepted/supported and shows the severity.
 # This command summarizes the other cipher checks.
 #
---cfg_cmd=ciphercheck=selected strong_cipher null_cipher adh_cipher exp_cipher cbc_cipher des_cipher rc4_cipher edh_cipher pfs_cipher pfs_cipherall cnt_ciphers cnt_totals
+--cfg_cmd=ciphercheck=cipher_selected cipher_strong cipher_null cipher_adh cipher_exp cipher_cbc cipher_des cipher_rc4 cipher_edh cipher_pfs cipher_pfsall cnt_ciphers cnt_totals
+
+###
+### define new command +names
+###
+# Collection of all info and check commands related to certificate names
+#
+--cfg_cmd=names=cn subject issuer altname verify_altname verify_hostname hostname sni certfqdn wildcard wildhost rfc_2818_names rfc_6125_names
 
 ###
 ### define new command +ocsp
 ###
-# Collection of all info and checkcommands related to OCSP data.
+# Collection of all info and check commands related to OCSP data.
 #
 --cfg_cmd=ocsp=ocsp_subject_hash ocsp_public_hash ocsp_uri ocsp_valid len_ocsp
 
@@ -162,7 +169,12 @@
 ###
 ### redefine command +http
 ###
---cfg_cmd=http=http_status http_location http_refresh http_sts https_status https_server https_location https_refresh https_alerts https_sts hsts_maxage hsts_subdom hsts_preload http_https hsts_is301 hsts_is30x hsts_redirect hsts_fqdn hsts_samehost hsts_httpequiv hsts_sts hsts_location hsts_refresh sts_maxage sts_subdom sts_maxage0d sts_maxage1d sts_maxage1m sts_maxage1y sts_maxage18 sts_maxagexy sts_expired https_pins pkp_pins http pfs_cipher
+--cfg_cmd=http=http_status http_location http_refresh http_sts https_status https_server https_location https_refresh https_alerts https_sts hsts_maxage hsts_subdom hsts_preload http_https hsts_is301 hsts_is30x hsts_redirect hsts_samehost hsts_fqdn hsts_httpequiv hsts_sts hsts_location hsts_refresh sts_maxage sts_subdom sts_maxage0d sts_maxage1d sts_maxage1m sts_maxage1y sts_maxage18 sts_maxagexy sts_expired https_pins pkp_pins http cipher_pfs
+
+###
+### redefine command +hsts
+###
+--cfg_cmd=hsts=http_https hsts_is301 hsts_is30x hsts_redirect hsts_samehost hsts_fqdn hsts_ip hsts_httpequiv hsts_maxage hsts_preload hsts_subdom hsts_sts hsts_location hsts_refresh sts_maxage sts_subdom sts_maxage0d sts_maxage1d sts_maxage1m sts_maxage1y sts_maxage18 sts_maxagexy sts_expired
 
 ###
 ### redefine command +info
@@ -176,14 +188,14 @@
 ###
 ### redefine command +check
 ###
---cfg_cmd=check=selected cnt_totals strong_cipher hassslv2 hassslv3 null_cipher adh_cipher exp_cipher cbc_cipher des_cipher rc4_cipher edh_cipher pfs_cipher pfs_cipherall dh_512 dh_2048 ecdh_256 ecdh_512 ism pci fips tr_02102+ tr_02102- tr_03116+ tr_03116- rfc_7525 beast breach crime time drown freak heartbleed logjam lucky13 poodle rc4 sloth sweet32 sni hostname reversehost cps crl crl_valid ev+ ev- ev_chars crnlnull nonprint ocsp_uri ocsp_valid fp_not_md5 sha2signature sig_encryption sig_enc_known pub_encryption pub_enc_known modulus_exp_65537 modulus_exp_oldssl modulus_size_oldssl expired dates rootcert selfsigned constraints verify certfqdn wildcard wildhost rfc_6125_names sernumber http_https hsts_is301 hsts_is30x hsts_redirect hsts_fqdn hsts_samehost hsts_httpequiv hsts_sts hsts_location hsts_refresh sts_maxage sts_subdom sts_maxage0d sts_maxage1d sts_maxage1m sts_maxage1y sts_maxage18 sts_maxagexy sts_expired pkp_pins krb5 psk_identity psk_hint master_key session_id session_ticket session_lifetime session_random closure sgc zlib open_pgp lzo hasnpn fallback renegotiation resumption srp scsv cnt_checks_yes cnt_checks_no cnt_altname cnt_chaindepth cnt_ciphers cnt_wildcard len_cps len_crl len_crl_data len_ocsp len_oids len_altname len_chain len_issuer len_pembase64 len_pembinary len_publickey len_sigdump len_subject len_sernumber check
+--cfg_cmd=check=cipher_selected cipher_strong hassslv2 hassslv3 hastls12 cipher_null cipher_adh cipher_exp cipher_cbc cipher_des cipher_rc4 cipher_edh cipher_pfs cipher_pfsall dh_512 dh_2048 ecdh_256 ecdh_512 ism pci fips tr_02102+ tr_02102- tr_03116+ tr_03116- rfc_7525 beast breach crime time drown freak heartbleed logjam lucky13 poodle rc4 robot sloth sweet32 sni hostname reversehost cps crl crl_valid ev+ ev- ev_chars crnlnull nonprint ocsp_uri ocsp_valid fp_not_md5 sha2signature sig_encryption sig_enc_known pub_encryption pub_enc_known modulus_exp_65537 modulus_exp_oldssl modulus_size_oldssl expired dates rootcert selfsigned constraints verify certfqdn wildcard wildhost rfc_2818_names rfc_6125_names sernumber http_https hsts_is301 hsts_is30x hsts_redirect hsts_samehost hsts_fqdn hsts_httpequiv hsts_sts hsts_location hsts_refresh sts_maxage sts_subdom sts_maxage0d sts_maxage1d sts_maxage1m sts_maxage1y sts_maxage18 sts_maxagexy sts_expired pkp_pins krb5 psk_identity psk_hint master_key session_id session_ticket session_lifetime session_random closure sgc zlib open_pgp lzo hasalpn hasnpn fallback renegotiation resumption srp scsv cnt_checks_yes cnt_checks_no cnt_ciphers cnt_totals cnt_chaindepth cnt_altname cnt_wildcard len_cps len_crl len_crl_data len_ocsp len_oids len_altname len_chain len_issuer len_pembase64 len_pembinary len_publickey len_sigdump len_subject len_sernumber check
 # useless for +check:    ip
 # don't use   +check:   (SSLv|TLSv)*
 
 ###
 ### redefine command +quick
 ###
---cfg_cmd=quick=selected cipher sslversion hassslv2 hassslv3 null_cipher adh_cipher exp_cipher cbc_cipher des_cipher rc4_cipher pfs_cipher beast crime drown freak heartbleed logjam lucky13 poodle rc4 sloth sweet32 fingerprint_hash fp_not_md5 sha2signature pub_encryption email serial subject dates verify heartbeat expansion compression hostname hsts_sts crl resumption renegotiation
+--cfg_cmd=quick=sslversion hassslv2 hassslv3 hastls12 cipher cipher_selected cipher_strong cipher_null cipher_adh cipher_exp cipher_cbc cipher_des cipher_rc4 cipher_edh cipher_pfs beast crime drown freak heartbleed logjam lucky13 poodle rc4 robot sloth sweet32 fingerprint_hash fp_not_md5 sha2signature pub_encryption email serial subject dates verify heartbeat expansion compression hostname hsts_sts crl resumption renegotiation
 
 ###
 ### redefine command +sizes
@@ -193,12 +205,12 @@
 ###
 ### redefine command +bsi
 ###
---cfg_cmd=bsi=after dates crl rc4_cipher renegotiation tr_02102+ tr_02102- tr_03116+ tr_03116-
+--cfg_cmd=bsi=after dates crl cipher_rc4 renegotiation tr_02102+ tr_02102- tr_03116+ tr_03116-
 
 ###
 ### redefine command +pfs
 ###
---cfg_cmd=pfs=pfs_cipher pfs_cipherall session_random
+--cfg_cmd=pfs=cipher_pfs cipher_pfsall session_random
 
 ###
 ### redefine command +protocols
@@ -208,7 +220,7 @@
 ###
 ### redefine command +vulns
 ###
---cfg_cmd=vulns=beast breach crime drown freak heartbleed logjam lucky13 poodle rc4 sloth sweet32 time hassslv2 hassslv3 pfs_cipher session_random
+--cfg_cmd=vulns=beast breach crime drown freak heartbleed logjam lucky13 poodle rc4 robot sloth sweet32 time hassslv2 hassslv3 cipher_pfs session_random
 
 ###
 ### redefine texts

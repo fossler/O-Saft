@@ -1,0 +1,543 @@
+#!/bin/sh
+#?
+#? NAME
+#?       $0 - wrapper script to handle O-Saft in a Docker image
+#?
+#? SYNOPSIS
+#?       $0
+#?       $0 build
+#?       $0 usage
+#?       $0 shell
+#?       $0 status
+#?       $0 rmi
+#?       $0 apk  package
+#?       $0 apt  package
+#?       $0 gui
+#?       $0 call /path/to/program [arguments]
+#?       $0 [options and commands of o-saft.pl]
+#?
+#? OPTIONS
+#?       -help   got it
+#?       -n      do not execute, just show what would be done
+#?       -v      be a bit verbose
+#?       -id=ID  use Docker image ID (registry:tag); default: owasp/o-saft
+#?       -tag=23 use Docker image ID with tag; default: (empty)
+#?       --      pass all remaining parameters to o-saft.pl in Docker image
+#?
+#? QUICKSTART
+#?       The main purpose of this wrapper is to provide a very simple call of
+#?       o-saft.pl  in a running O-Saft Docker image. It is the default mode.
+#?       Example:
+#?           $0 +info your.tld
+#?
+#? DESCRIPTION
+#?       This is a multipurpose wrapper to handle O-Saft in a Docker image.
+#?       It can operate in following modes:
+#?           build   - build the Docker image for O-Saft from Dockerfile
+#?           usage   - print the initial usage message for O-Saft in Docker
+#?           status  - show various information about O-Saft Docker image
+#?           rmi     - remove O-Saft Docker image(s)
+#?           apk     - add and commit packages in O-Saft Docker image
+#?           shell   - run a shell (/bin/sh) in Docker image
+#?           root    - run a shell (/bin/sh) as user root in Docker image
+#?           call    - run specified program with arguments in Docker image
+#?           cp      - copy file to /O-Saft directory in the Docker image
+#            hacker  - show more information
+#?           gui     - start o-saft.tcl in the Docker image
+#?           *       - anything else (default): run o-saft.pl in Docker image
+#?
+#?       This wrapper expects, that the O-Saft Docker image has the name:
+#?           owasp/o-saft
+#?       If there are more Docker images with the same (registry) name, a tag
+#?       can be used to identify the image, see  -tag=TAG  option, i.e.
+#?           $0 -tag=17.07.17 +info your.tld
+#?       will use the name:  owasp/o-saft:17.07.17 .  The  -id=ID  option can
+#?       be used to redefine the (registry:tag) name to be used completely.
+#?       For example:
+#?           owasp/o-saft:4711
+#?
+#?       If any other mode than the default is used, please see  WARNING  and
+#?       SECURITY  below.
+#?
+#? TERMINOLOGY
+#?
+#?   Docker vs. docker
+#?       The term "Docker" is used when the Docker system in general is meant.
+#?       The term "docker" is used when the Docker client program is meant.
+#?
+#?   mode vs. command
+#?       The term "mode" is used for our script, which is similar to the term
+#?       "command" of Docker. This is to distinguish the commands herein from
+#?       those of Docker.
+#?
+#? MODES
+#?       Modes are simply an alias  to call  docker  with the proper commands
+#?       and options for the  O-Saft Docker image. Most modes use the command
+#?       "docker run --rm ...".
+#?       This wrapper ensures that the proper O-Saft image within Docker will
+#?       be used by passing the correct  "repository:tag"  image id (default:
+#?       owasp/o-saft). This script will exit, if the image owasp/o-saft does
+#?       exist (to avoid automatic pull from Docker's repository).
+#?
+#?       The modes are:
+#?
+#?   default
+#?       In default mode,  all parameters given to this wrapper are passed to
+#?       o-saft.pl  in the Docker image. This means that for all the existing
+#?       calls, the name of the script (usually o-saft.pl) needs simply to be
+#?       replaced by  $0 . Example:
+#?           o-saft.pl +info your.tld
+#?       becomes
+#?           $0 +info your.tld
+#?       Please see  LIMITATIONS  below also.
+#?
+#?   gui
+#?       Start  o-saft.tcl in the Docker image with display to the host where
+#?       started.
+#?
+#?   build
+#?       This mode builds the Docker image for O-Saft from the Dockerfile. If
+#?       ./Dockerfile is missing following will be used:
+#?           https://github.com/OWASP/O-Saft/raw/master/Dockerfile
+#?
+#?   apk
+#?   apt
+#?       Add and commit the specified packages in O-Saft Docker image.
+#?       Note that this creates a new layer for the O-Saft Docker image.
+#?       For more advanced mode, please refer to  o-saft-docker-dev.
+#?       Uses  apk or apt  to add/install the package, depending on the mode.
+#?
+#?   rmi
+#?       Remove all O-Saft images, including tagged images.
+#?
+#?   usage
+#?       Print a brief purpose and usage of this script.
+#?       It is intended to be called from within the Docker image once, right
+#?       after the initial build (see Dockerfile).
+#?
+#?   shell
+#?       Start a shell in O-Saft Docker image.
+#?       This is useful because the  ENTRYPOINT  in the image is  o-saft.pl
+#?       which otherwise will always be executed.
+#?
+#?   root
+#?       Same as mode  shell, but login as user root.
+#?
+#?   cp
+#?       Copy file to /O-Saft directory in the Docker image.
+#?
+#?   call
+#?       Execute specified program (must be full path) with given arguments.
+#?       This might be usefull to retrieve other information  from the image,
+#?       i.e. O-Saft  itself uses it to get the environment variables set in 
+#?       the image:
+#?           $0 call /usr/bin/env
+#?
+#?   inspect
+#?       Print information about O-Saft Docker image using inspect command.
+#?
+#?   status
+#?       Show various information about O-Saft Docker image.
+#?
+#? WARNING
+#?       It is highly recommended to  *not* use the created image as base for
+#?       other Docker images. Also,  do *not*  use openssl from the image for
+#?       other purpose than O-Saft intends.
+#?
+#? SECURITY
+#?       When working with Docker images, at least two types of security have
+#?       to be observed.
+#?
+#?       It is rather difficult to create a secure Docker image, at least the
+#?       pulled files (Dockerfile, image, other sources) must be trusted.
+#?
+#?       The known security types are:
+#?
+#?   Security of the created images
+#?       When creating Docker images, wether using  build, load or pull,  you
+#?       must trust the sources: the binary (load or pull) or the  Dockerfile
+#?       (which may be fetched at runtime too) used to build the image.
+#?
+#?   Security of the tools executed from within the image (docker run)
+#?       If the image is trustworthy (see before),  the tools executed in the
+#?       image may have security impacts. 
+#?       This script creates a Docker image for O-Saft. O-Saft is supposed to
+#?       checks a target for SSL/TLS related issues.  I. g. it doesn not harm
+#?       the target using  penetration or attacking techniques  (except check
+#?       for Heartbleed vulnerability). So o-saft.pl itself should not be any
+#?       security issue. However, to perform the checks, O-Saft recommends to
+#?       install a special version of OpenSSL. This OpenSSL has functionality
+#?       enabled, which is known to be insecure (i. e. SSLv2, SSLv3).
+#?
+#?       That's why this script uses a transparent method to create an image.
+#?       
+#? HACKER's INFO
+#?       Options for this script are with a single - (dash) only, because the
+#?       same options with double  --  exist for  o-saft.pl. See  LIMITATIONS
+#?       below also.
+#
+#        We do not use shortcut commands for docker like run, rmi, save, etc.
+#        because they are depricated according docker docukentation.
+#
+#        Keep in mind that docker is picky about the sequence of commands and
+#        options. In particular all options must preced the IMAGE argument.
+#
+#        "docker commit ..." is used without the --message option because the
+#        documentation about  --message and/or -m  is ambigious. Also passed
+#        comment text is mainly the same as Docker already reports with the
+#        "docker history IMAGE"  command in the  "CREATED BY" column.
+#
+# KNOWN PROBLEMS
+#        * Error when building docker image
+#            fetch http://dl-cdn.alpinelinux.org/alpine/edge/main/x86_64/APKINDEX.tar.gz
+#            WARNING: Ignoring http://dl-cdn.alpinelinux.org/alpine/edge/main/x86_64/APKINDEX.tar.gz: temporary error (try again later)
+#            fetch http://dl-cdn.alpinelinux.org/alpine/edge/community/x86_64/APKINDEX.tar.gz
+#            WARNING: Ignoring http://dl-cdn.alpinelinux.org/alpine/edge/community/x86_64/APKINDEX.tar.gz: temporary error (try again later)
+#            ERROR: unsatisfiable constraints:
+#
+#          Reason: backend mirror  dl-cdn.alpinelinux.org  down or not responding
+#          Most likely an update of the host's docker package will fix it.
+#?
+#? LIMITATIONS
+#?       The options  -n  -v  -id=ID  and  -help  must be specified  leftmost
+#?       if they should apply for this script.
+#?       These options can only be passed to  o-saft.pl  in the Docker image,
+#?       if they are preceeded by the  --  parameter.
+#?       Unknown parameters to this script will be treated as arguments to be
+#?       passed to o-saft.pl and will terminate internal argument scanning in
+#?       this script.
+#?
+#? ENVIONMENT VARIABLES
+#?       Following environment variables can be used to pass settings to the
+#?       script:
+#?
+#?           OSAFT_VERSION          - version to be passed to Dockerfile
+#?           o_saft_docker_name     - contains an image registry name
+#?           o_saft_docker_tag      - contains an image tag
+#?
+#?       To get the build-in defaults use:
+#?           $0 status
+#?
+#? EXAMPLES
+#?       See  SYNOPSIS.
+#?
+#? SEE ALSO
+#?       docker(1), o-saft-docker-dev, o-saft.pl, o-saft.tcl
+#?
+#? VERSION
+#?       @(#) o-saft-docker 1.28 17/11/22 01:17:26
+#?
+#? AUTHOR
+#?      17-jul-17 Achim Hoffmann
+#?
+# -----------------------------------------------------------------------------
+
+VERSION="${OSAFT_VERSION:-17.11.11}"
+tag=${o_saft_docker_tag};     # tag=${tag:-17.09.17}
+registry=${o_saft_docker_name}; registry=${registry:-owasp/o-saft}
+image_name="${registry}"
+entrypoint='ENTRYPOINT ["perl", "/O-Saft/o-saft.pl"]';  # default ENTRYPOINT
+entry__cmd='CMD ["--norc", "--help=docker"]':           # default CMD
+[ -n "$tag" ] && image_name="${registry}:${tag}"
+try=
+exe=o-saft.pl
+dockerfile="https://github.com/OWASP/O-Saft/raw/master/Dockerfile"
+
+check_image_name () {
+	#? check if image with configured registry:tag exists; exit otherwise
+	# This tool does not allow automatic pull by default.
+	# Most (all?) Docker commands automatically try to pull the specified
+	# image if it does not exist.  More worse, while some Docker commands
+	# use any matching registry name  (run without --entrypoint=), others
+	# require that the registry:tag name exists (run with --entrypoint=).
+	# Unfortunately Docker  does not provide  any option or configuration
+	# to inhibit such automatic pulls.
+	# This function tries to find existing images matching the configured
+	# image (name). The function exits the script if the found image name
+	# does not equal the configured image name.
+	# This function should be called before most docker commands.
+	#dbx#  \docker image ls ${image_name} -q | \wc -w
+	is_id=`\docker image ls ${image_name} -q | \wc -w`
+	[ "${is_id}" -eq 1 ] && return; # found image, return
+
+	[ "${is_id}" -ne 1 ] && \
+		echo "**ERROR: given image '${image_name}' does not match found image(s)" # '${is_id}'"
+	if [ "${is_id}" -gt 1 ]; then
+		for tag in `\docker image ls ${image_name} | \awk '/^REPOSITORY/{next}{print $2}'` ; do
+			# varaiable tag is the same as the global one!
+			echo "#        consider using  option -id=${image_name}:$tag  or  -tag=$tag"
+		done
+	fi
+	exit 3;     # no image found, exit script
+}
+
+docker_usage () {
+	# TODO: env|grep osaft_vm_build
+	_openssl="/openssl/bin/openssl";    # TODO: still hardcoded
+	_ciphers=`$0 call $_openssl ciphers -V ALL:COMPLEMENTOFALL:aNULL | \wc -l`
+	cat << EoDescription
+
+      # openssl:
+	$_openssl supports $_ciphers ciphers 
+
+      # o-saft.pl:
+	O-Saft docker image is ready to run o-saft.pl, use:
+
+		docker run --rm -it ${image_name} +info your.tld
+	or:
+		$0 +info your.tld
+
+      # o-saft.tcl:
+	The GUI  o-saft.tcl  will only work inside Docker if the the packages
+	tcl tk and xvfb   are installed.  However  o-saft.tcl  may be started
+        on the host and then use  o-saft.pl  from the Docker image.
+
+	# run on host:
+
+		o-saft.tcl --docker
+
+	# run in Docker image
+
+		$0 apk add tcl tk xvfb
+		$0 gui
+
+EoDescription
+}
+
+docker_hacker () {
+	cat << EoHacker
+
+	To use the GUI  o-saft.tcl  inside Docker, additionl packages need to
+	be installed. For Docker image based on alpine, following works:
+
+		$0 apk add tcl tk xvfb
+
+EoHacker
+}
+
+docker_inspect () {
+	$try \docker image inspect ${image_name}
+}
+
+docker_status () {
+ 	image_id=`\docker image ls -q ${image_name}`
+	cat << EoStatus
+# using environment ...
+#     OSAFT_VERSION      = $OSAFT_VERSION
+#     o_saft_docker_name = $o_saft_docker_name
+#     o_saft_docker_tag  = $o_saft_docker_tag
+
+# using ...
+#     registry name = ${registry}
+#     tag           = ${tag}
+#?    registry:tag  = ${image_name}
+
+# docker image id for ${image_name} is  $image_id
+
+# docker images for   ${registry} ...
+EoStatus
+
+	# list matching images
+	$try \docker image ls ${registry}; # will be listed below again
+	# list related (tagged) images
+	for _id in  `\docker image ls -q ${registry}` ; do
+		$try \docker image ls | \grep "$_id"
+	done;
+	echo
+	echo "# docker processes ..."
+	$try \docker container ls -a
+
+	echo ""
+	echo "# O-Saft docker image ..."
+	_id=`$0 call env | grep osaft_vm_build`
+	if [ -n "$_id" ]; then
+		echo "$_id"
+	else
+		echo "<<no build variable 'osaft_vm_build' found>>"
+	fi
+}
+
+docker_build () {
+	# build O-Saft Docker image from Dockerfile, mainly using defaults
+	# from Dockerfile
+	_cfg=./Dockerfile
+	[ ! -e $_cfg ] && $try \wget ${dockerfile} -O $_cfg
+	_tar=o-saft_docker.tar
+	$try \docker image build -f ./Dockerfile --force-rm --rm -t ${image_name} \
+		--build-arg "OSAFT_VERSION=$VERSION" .	&& \
+	$try \docker image save  -o $_tar ${image_name}	&& \
+	$try \docker image rm    `$try docker image ls -q ${image_name}` && \
+	$try \docker image load  -i $_tar && \
+	$try \rm                    $_tar && \
+	$try \docker image tag   ${image_name} o-saft
+}
+
+docker_osaft () {
+	# this is the command for the default mode, passing all parameters
+	# expects a proper ENTRYPOINT like /O-Saft/o-saft.pl in the image
+	$try \docker container run --rm -i  ${image_name} $@
+}
+
+docker_gui   () {
+	$try \docker container run --rm -i  --entrypoint=/O-Saft/o-saft.tcl \
+		-e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix ${image_name} $@
+}
+
+docker_call ()  {
+	cmd="$1"
+	shift
+	$try \docker container run --rm -it --entrypoint=$cmd    ${image_name} $@
+}
+
+docker_shell () {
+	$try \docker container run --rm -it --entrypoint=/bin/sh ${image_name}
+}
+
+docker_root ()  {
+	$try \docker container run --rm -it --entrypoint=/bin/sh --user root ${image_name}
+}
+
+docker_cp   ()  {
+	_id="o-saft-cp"
+	# create a new container with a dummy command; exit if exists or fails
+	$try \docker container run   --name ${_id} ${image_name} +VERSION || exit 4
+	$try \docker container cp    $@     ${_id}:/O-Saft/
+	$try \docker container commit       ${_id} ${image_name}
+	$try \docker container rm           ${_id}
+	#
+	# if we need to reset the entrypoint:
+	# $try \docker container commit       \
+	#	--change='ENTRYPOINT ["perl","/O-Saft/o-saft.pl"]' \
+	#
+}
+
+docker_apk  ()  {
+	_id="o-saft-apk"
+	# after commit the entrypoint is changed, hence the original one is
+	# set again with commit's --change option; unfortunately hardcoded
+	$try \docker container run -t --user root --entrypoint=/sbin/apk \
+				--name      ${_id} ${image_name} add --no-cache $@ \
+		|| exit 4
+	$try \docker container commit \
+		--change="${entrypoint}" --change="${entry__cmd}" \
+					    ${_id} ${image_name}
+	$try \docker container rm           ${_id} 
+	return
+
+	# TODO: following more cleaner method does not work (reason yet unknown)
+	$try \docker container run  -d --name ${_id} ${image_name} +VERSION || exit 4
+	$try \docker container exec -t --user root ${_id} /sbin/apk add --no-cache $@
+	$try \docker container commit       ${_id} ${image_name}
+	$try \docker container rm           ${_id} 
+}
+
+docker_apt  ()  {
+	_id="o-saft-apt"
+	$try \docker container run -t --user root --entrypoint=/usr/bin/apk \
+				--name      ${_id} ${image_name} install --no-cache $@ \
+		|| exit 4
+	$try \docker container commit \
+		--change="${entrypoint}" --change="${entry__cmd}" \
+					    ${_id} ${image_name}
+	$try \docker container rm           ${_id} 
+}
+
+docker_rmi  ()  {
+	# parameters can only be the options for Docker's rmi command
+	#dbx# echo "# registry: ${registry} # image_name: ${image_name}"
+	_ids=`\docker image ls -q ${registry}` # ${image_name}
+	echo "# image IDs to be deleted: $_ids "
+	# need to find all images,  including referenced images, this is done
+	# with "images" command, then extract all lines with matching IDs,
+	# only these IDs are deleted
+	# Note: "docker images"  should return newest image on top, hence all
+	#       images which just represent a tag (alias) come first and will
+	#       be deleted first
+	\docker image ls | while read _any ; do
+		for _id in $_ids ; do
+			_img=`echo "$_any" | \awk "/$_id/"'{print $3}'`
+			#dbx# echo "# ID  $_any : $_id : $_img"
+			[ -z "$_img" ] && continue  # other image
+			$try \docker image rm -f $@ $_img
+		done
+	done
+	$try \docker image rm ${registry}
+}
+
+my_help ()      {
+	ich=${0##*/}
+	\sed -ne "s/\$0/$ich/g" -e '/^#?/s/#?//p' $0
+}
+
+# first check for options
+while [ $# -gt 0 ]; do
+	case "$1" in
+	  '-n')     try=echo; ;;
+	  '-v')     set -x  ; ;;
+	  -tag=*)   tag="`expr "$1" ':' '-tag=\(.*\)'`"
+	            image_name="${registry}:$tag" 
+	            ;;
+	  -id=*)    image_name="`expr "$1" ':' '-id=\(.*\)'`"; ;;
+	  '-help')  my_help;        exit 0; ;;
+	  *)        break;  ;;
+	esac
+	shift
+done
+
+# don't run inside docker
+case "$1" in
+  'hacker') ;;
+  'usage')  ;;
+  *)        if [ -n "$osaft_vm_build" ]; then
+		echo "**ERROR: cannot run inside docker image; exit"
+		exit 1
+	    fi
+	    ;;
+esac
+
+# some modes do not need to check existing images
+case "$1" in
+  'build')  ;;
+  'usage')  ;;
+  'hacker') ;;
+  *)        check_image_name;   # may exit, see description there
+esac
+
+# NOTE: All functions may use ${registry} and ${image_name}, which are global
+#       variables. We do not pass these values as parameters to the functions
+#       because we want $@ (all parameters of this script) in the functions
+while [ $# -gt 0 ]; do
+	mode="$1"
+	shift
+	case "$mode" in
+	  'build')  docker_build;   exit 0; ;;
+	  'usage')  docker_usage;   exit 0; ;;
+	  'call')   docker_call $@; exit 0; ;;
+	  'gui')    docker_gui  $@; exit 0; ;;
+	  'cp')     docker_cp   $@; exit 0; ;;
+	  'apk')    docker_apk  $@; exit 0; ;;
+	  'rmi')    docker_rmi  $@; exit 0; ;;
+	  'root')   docker_root;    exit 0; ;;
+	  'shell')  docker_shell;   exit 0; ;;
+	  'inspect')docker_inspect; exit 0; ;;
+	  'status') docker_status;  exit 0; ;;
+	  'hacker') docker_hacker;  exit 0; ;;
+#          -registry=*) registry=  # not supported, as this is for O-Saft only
+          '--')     shift; break; ;;
+          *)               break; ;;
+	esac
+done
+set -- "$mode" $@ ; # 1st argument has no special meaning, pass to o-saft.pl
+
+if [ $# -lt 1 ]; then
+	# did not get any argument, print own usage
+	my_help
+	echo
+	echo "**WARNING:  $0  called without parameters; nothing done."
+	echo
+	exit 2
+fi
+
+docker_osaft $@
+
+exit

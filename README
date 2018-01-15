@@ -1,5 +1,5 @@
  /~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-.
-                                                          Version: 17.05.17  )
+                                                          Version: 17.11.17  )
         O-Saft  - OWASP SSL advanced forensic tool                          (
 	                                                                     )
  /~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-/
@@ -87,6 +87,8 @@
  )      git clone https://github.com/OWASP/O-Saft.git
 (       wget https://github.com/OWASP/O-Saft/raw/master/o-saft.tgz
  )
+(   Get Docker Image
+ )      docker pull owasp/o-saft
 (
  )  VERSION
 (       The version of the tarball  o-saft.tgz  represents the version listed
@@ -94,6 +96,10 @@
 (       (tarball) version.
  )
 (       SHA256 checksum of o-saft.tgz
- )           ea53f8a8ee68e61119da75288ac39108d8aaed0233720633c46005b17a1743c0
+ )           a4d85953bdd1e08d20c6f31e9be7ea0af6ae8de3544bbfe823bd1e34ace26e7d
+(
+ )      SHA256 checksum of owasp/o-saft:latest and owasp/o-saft:17.11.17
+(            10d8f59353d504ad191e39df39e1c0c13bf22d9f7d535f4d45224b423beb7c5c
+ )
 (
  \_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-~-_-/
